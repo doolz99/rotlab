@@ -40,6 +40,8 @@ input[type=tel].field{font-size:28px;letter-spacing:.3em;text-align:center}
   <div id="pinErr" style="color:#ff8a8a"></div>
  </div>
  <div class="body hide" id="upCard">
+  <label for="proj">Project:</label>
+  <select id="proj" class="field"></select>
   <label class="btn" for="files" style="display:flex;align-items:center;justify-content:center">Choose videos / photos...</label>
   <input type="file" id="files" multiple accept="video/*,image/*,audio/*" class="hide">
   <div class="in hide" id="list" style="padding:2px 8px"></div>
@@ -64,6 +66,9 @@ async function hello(){const r=await fetch("/api/hello",{headers:{"X-Pin":PIN}})
 async function connect(){$("pinErr").textContent="";
  try{const j=await hello();localStorage.setItem("vh_pin",PIN);$("pinCard").classList.add("hide");$("upCard").classList.remove("hide");
   $("sub").textContent="Connected to "+j.pc+"'s PC"+(j.online&&j.online.length?" · "+j.online.join(", ")+" online":"")+" · "+size(j.free)+" free";
+  const ps=j.projects||[];let keep=localStorage.getItem("rl_proj");if(!ps.some(p=>p.pid===keep))keep=j.project;
+  $("proj").innerHTML=ps.map(p=>`<option value="${esc(p.pid)}" ${p.pid===keep?"selected":""}>${esc(p.name)}</option>`).join("");$("proj").parentElement.querySelector("label[for=proj]").classList.toggle("hide",!ps.length);$("proj").classList.toggle("hide",!ps.length);
+  $("proj").onchange=()=>localStorage.setItem("rl_proj",$("proj").value);
   $("tags").innerHTML=j.tags.map(t=>`<label><input type="checkbox" value="${esc(t)}"> ${esc(t)}</label>`).join("")}
  catch(e){$("pinCard").classList.remove("hide");$("upCard").classList.add("hide");if(PIN)$("pinErr").textContent=e.message}}
 $("pinBtn").onclick=()=>{PIN=$("pin").value.trim();connect()};$("pin").onkeydown=e=>{if(e.key==="Enter")$("pinBtn").click()};
@@ -80,7 +85,7 @@ function refresh(){const n=queue.filter(x=>x.state==="new").length,ok=queue.filt
  $("summary").classList.toggle("hide",!busy&&!ok&&!err);$("summary").textContent=busy?`Uploading… ${ok} of ${queue.length} done`:(err?`${ok} uploaded, ${err} failed`:`✅ All ${ok} uploaded`);
  $("retry").classList.toggle("hide",busy||!err)}
 function up(it){return new Promise(res=>{const x=new XMLHttpRequest();
- x.open("POST",`/api/upload?name=${encodeURIComponent(it.f.name)}&lm=${it.f.lastModified||""}&batch=${batch}&fnote=${encodeURIComponent(it.note||"")}`);
+ x.open("POST",`/api/upload?name=${encodeURIComponent(it.f.name)}&lm=${it.f.lastModified||""}&batch=${batch}&fnote=${encodeURIComponent(it.note||"")}&project=${encodeURIComponent($("proj").value||"")}`);
  x.setRequestHeader("X-Pin",PIN);x.setRequestHeader("Content-Type","application/octet-stream");
  x.upload.onprogress=e=>{if(e.lengthComputable){it.pct=Math.floor(e.loaded/e.total*100);draw(it)}};
  x.onload=()=>{let j={};try{j=JSON.parse(x.responseText)}catch(e){}if(x.status===200)it.state="ok";else{it.state="err";it.err=j.error||("Error "+x.status);if(x.status===401)localStorage.removeItem("vh_pin")}draw(it);res()};

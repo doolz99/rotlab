@@ -39,7 +39,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "2.1"
+HUB_VERSION = "3.0"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -50,18 +50,27 @@ CHAT_DIR = os.path.join(HUB_DIR, "chat")
 NOTES_DIR = os.path.join(HUB_DIR, "notes")
 HISTORY_DIR = os.path.join(HUB_DIR, "history")
 INBOX = os.path.join(ROOT, "Inbox")
+os.makedirs(os.path.join(ROOT, "Shared"), exist_ok=True)
 for _d in (PRESENCE_DIR, ACTIVITY_DIR, CHAT_DIR, NOTES_DIR, HISTORY_DIR, INBOX):
     os.makedirs(_d, exist_ok=True)
 
-CATS = ["Video", "Audio", "Images", "Graphics", "Renders", "Project", "Other"]
+CATS = ["Video", "Audio", "Images", "Graphics", "Exports", "Project", "Other"]
 CAT_EXT = {
     "Video": {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".m2ts", ".webm", ".3gp", ".wmv", ".mxf", ".mpg", ".mpeg"},
     "Audio": {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".wma", ".aif", ".aiff", ".opus"},
     "Images": {".jpg", ".jpeg", ".heic", ".heif", ".dng", ".raw", ".cr2", ".cr3", ".nef", ".arw", ".tif", ".tiff", ".bmp"},
     "Graphics": {".png", ".gif", ".webp", ".svg", ".psd", ".ai", ".eps", ".ttf", ".otf"},
-    "Project": {".veg"},
+    "Project": {".veg", ".flp", ".kra", ".psd", ".clip", ".blend", ".aep", ".prproj", ".als", ".xcf", ".sai2", ".procreate", ".mlt", ".drp"},
 }
-RENDER_WORDS = ("render", "export", "preview")
+PROJECT_APPS = {".veg": "VEGAS", ".flp": "FL Studio", ".kra": "Krita", ".psd": "Photoshop", ".clip": "Clip Studio",
+                ".blend": "Blender", ".aep": "After Effects", ".prproj": "Premiere", ".als": "Ableton", ".xcf": "GIMP",
+                ".sai2": "SAI", ".procreate": "Procreate", ".mlt": "Shotcut", ".drp": "DaVinci Resolve"}
+APP_EXES = [("vegas", "VEGAS"), ("fl64", "FL Studio"), ("fl.exe", "FL Studio"), ("krita", "Krita"),
+            ("photoshop", "Photoshop"), ("clipstudiopaint", "Clip Studio"), ("blender", "Blender"),
+            ("afterfx", "After Effects"), ("adobe premiere", "Premiere"), ("ableton", "Ableton"), ("gimp", "GIMP")]
+EXPORT_DIRS = {"exports", "export", "renders", "render", "mixdowns", "mixdown", "bounces", "output", "outputs"}
+HISTORY_MAX_BYTES = 300 * 1024 * 1024
+RENDER_WORDS = ("render", "export", "preview")  # (2.x)
 SKIP_EXT = {".sfk", ".sfap0", ".sfvp0", ".bak", ".tmp", ".ini", ".db", ".part"}
 PRESENCE_HEARTBEAT = 60
 HISTORY_KEEP = 60  # saves kept per project file
@@ -111,14 +120,27 @@ def safe_path(relpath):
     return p
 
 
-def category_of(relpath):
+def media_of(relpath):
     ext = os.path.splitext(relpath)[1].lower()
     for cat, exts in CAT_EXT.items():
         if ext in exts:
-            if cat == "Video" and any(w in relpath.lower() for w in RENDER_WORDS):
-                return "Renders"
             return cat
     return "Other"
+
+
+def is_export(relpath):
+    parts = relpath.replace("\\", "/").lower().split("/")[:-1]
+    return any(x in EXPORT_DIRS for x in parts) and media_of(relpath) in ("Video", "Audio", "Images", "Graphics")
+
+
+def is_project_file(relpath):
+    return os.path.splitext(relpath)[1].lower() in PROJECT_APPS
+
+
+def category_of(relpath):
+    if is_export(relpath):
+        return "Exports"
+    return media_of(relpath)
 
 
 def clean_name(name):
@@ -684,6 +706,7 @@ def scan_library():
                 continue
             p = rel(full)
             items.append({"path": p, "name": fn, "folder": os.path.dirname(p), "cat": category_of(p),
+                          "media": media_of(p), "export": is_export(p), "project": project_of_path(p),
                           "size": st_.st_size, "mtime": st_.st_mtime})
     sig = hashlib.md5(json.dumps([(i["path"], i["size"], int(i["mtime"])) for i in items]).encode()).hexdigest()
     with LIB_LOCK:
@@ -707,9 +730,11 @@ def added_by_index():
     return who
 
 
-def library(cat=None, q=None):
+def library(cat=None, q=None, project=None):
     with LIB_LOCK:
         items = list(LIB["items"])
+    if project:
+        items = [i for i in items if i.get("project") == project]
     notes, tags = notes_index()
     who = added_by_index()
     counts = {c: 0 for c in CATS}
@@ -738,30 +763,50 @@ def file_detail(path):
     full = safe_path(path)
     notes, tags = notes_index()
     st_ = os.stat(full)
-    hist = history_list(path) if path.lower().endswith(".veg") else []
-    return {"path": path, "name": os.path.basename(full), "cat": category_of(path), "size": st_.st_size,
+    hist = history_list(path) if is_project_file(path) else []
+    wst = ws_state()
+    return {"path": path, "name": os.path.basename(full), "cat": category_of(path), "media": media_of(path),
+            "size": st_.st_size, "project": project_of_path(path), "app": PROJECT_APPS.get(os.path.splitext(path)[1].lower()),
             "mtime": st_.st_mtime, "notes": notes.get(path, []), "tags": tags.get(path, []),
-            "by": added_by_index().get(path), "history": hist[:5], "history_count": len(hist)}
+            "by": added_by_index().get(path), "history": hist[:5], "history_count": len(hist),
+            "comments": [c for c in wst["comments"].values() if c["file"] == path],
+            "used_by": [l["lid"] for l in wst["links"].values() if l.get("version") == path or l.get("target") == path]}
 
 
 # ---------------------------------------------------------------- where new files go
-def auto_dest(name, mtime=None):
-    cat = category_of(name)
+TYPE_FOLDERS = {"Video": ["Video", "Files"], "Audio": ["Audio", "Samples", "Files"], "Images": ["Images", "References", "Files"],
+                "Graphics": ["Graphics", "Images", "Textures", "Files"], "Other": ["Files"]}
+
+
+def current_project():
+    st_ = ws_state()
+    pid = CONFIG.get("project")
+    if pid in st_["projects"] and not st_["projects"][pid].get("archived"):
+        return pid
+    live = [p for p in sorted(st_["projects"].values(), key=lambda p: p["ts"]) if not p.get("archived")]
+    return live[0]["pid"] if live else SHARED
+
+
+def auto_dest(name, mtime=None, pid=None):
+    pid = pid or current_project()
+    base = proj_dir(pid)
+    cat = media_of(name)
     if cat == "Project":
-        return ROOT
-    if cat == "Renders":
-        cat = "Video"
-    folders = CONFIG.get("folders") or {}
-    base = folders.get(cat) or cat
-    d = os.path.join(ROOT, base)
+        return base
+    for cand in TYPE_FOLDERS.get(cat, ["Files"]):
+        if os.path.isdir(os.path.join(base, cand)):
+            d = os.path.join(base, cand)
+            break
+    else:
+        d = os.path.join(base, TYPE_FOLDERS.get(cat, ["Files"])[0])
     if CONFIG.get("date_folders", True) and cat in ("Video", "Images"):
         d = os.path.join(d, time.strftime("%Y-%m-%d", time.localtime(mtime or now())))
     return d
 
 
-def dest_folder(dest, name, mtime=None):
+def dest_folder(dest, name, mtime=None, pid=None):
     if not dest or dest == "auto":
-        return auto_dest(name, mtime)
+        return auto_dest(name, mtime, pid)
     return safe_path(dest)
 
 
@@ -785,13 +830,13 @@ BATCHES = {}  # batch id -> {"files": [...], "bytes": n, "ts": t}
 CURRENT_UPLOAD = {"v": None}
 
 
-def receive_upload(rfile, total, name, dest="auto", lm=None, batch=None, fnote=None):
+def receive_upload(rfile, total, name, dest="auto", lm=None, batch=None, fnote=None, pid=None):
     """Stream an upload to disk under a temp name sync ignores, then move it into place."""
     name = clean_name(name)
     mt = (int(lm) / 1000.0) if (lm and str(lm).isdigit()) else None
     if mt and not (946684800 < mt < now() + 86400):
         mt = None
-    folder = dest_folder(dest, name, mt)
+    folder = dest_folder(dest, name, mt, pid)
     os.makedirs(folder, exist_ok=True)
     if shutil.disk_usage(folder).free < total + 500 * 1024 * 1024:
         raise IOError("Not enough free space on the PC")
@@ -886,7 +931,7 @@ def sort_inbox(force=False):
         stable = prev and prev[0] == st_.st_size and now() - st_.st_mtime > 10
         if not (stable or force):
             continue
-        dest = unique_path(auto_dest(os.path.basename(full), st_.st_mtime), os.path.basename(full))
+        dest = unique_path(auto_dest(os.path.basename(full), st_.st_mtime, CONFIG.get("inbox_project") or current_project()), os.path.basename(full))
         try:
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             shutil.move(full, dest)
@@ -948,6 +993,8 @@ def snapshot(relpath, reason="saved"):
     """Copy a .veg into history if its content changed. Returns the history entry or None."""
     try:
         full = safe_path(relpath)
+        if os.path.getsize(full) > HISTORY_MAX_BYTES:
+            return None
         with open(full, "rb") as f:
             data = f.read()
     except (OSError, ValueError):
@@ -1139,13 +1186,13 @@ def watch_flush(force=False):
         log_event("files", action="renamed", count=len(pairs), pairs=[list(x) for x in pairs[:200]],
                   files=[x[1] for x in pairs[:200]], folder=_common_folder([x[1] for x in pairs]))
     # .veg saves -> history + "saved" line
-    for p in [x for x in added + modified if x.lower().endswith(".veg")]:
+    for p in [x for x in added + modified if is_project_file(x)]:
         if p in RECENT_WRITES:
             continue
         snap = snapshot(p)
         log_event("saved", file=p, snapshot=(snap or {}).get("id"))
-    added = [p for p in added if not p.lower().endswith(".veg") and p not in RECENT_WRITES]
-    modified = [p for p in modified if not p.lower().endswith(".veg") and p not in RECENT_WRITES]
+    added = [p for p in added if not is_project_file(p) and p not in RECENT_WRITES]
+    modified = [p for p in modified if not is_project_file(p) and p not in RECENT_WRITES]
     deleted = [p for p in deleted if p not in RECENT_WRITES]
     for action, lst in (("added", added), ("modified", modified), ("deleted", deleted)):
         groups = {}
@@ -1185,6 +1232,7 @@ def restore_deleted(relpath):
 
 # ---------------------------------------------------------------- local machine: is VEGAS open, with which project?
 def detect_vegas():
+    """Which creative app is open, and which project file (from the window title). (name kept from 2.x)"""
     if os.name != "nt":
         return None
     try:
@@ -1193,16 +1241,20 @@ def detect_vegas():
     except Exception:
         return None
     found = None
+    exts = "|".join(re.escape(e[1:]) for e in PROJECT_APPS)
     for row in csv.reader(io.StringIO(out)):
         if not row:
             continue
         exe = row[0].lower()
-        if exe.startswith("vegas") and exe.endswith(".exe"):
-            title = row[-1] if row[-1] != "N/A" else ""
-            m = re.search(r"([^\\/:*?\"<>|]+\.veg)\b", title, re.I)
-            info = {"exe": row[0], "title": title, "project": m.group(1).strip() if m else ""}
-            if not found or (info["project"] and not found["project"]):
-                found = info
+        app = next((nm for key, nm in APP_EXES if exe.startswith(key) and exe.endswith(".exe")), None)
+        if not app:
+            continue
+        title = row[-1] if row[-1] != "N/A" else ""
+        m = re.search(r"([^\\/:*?\"<>|\[\]]+\.(?:%s))\b" % exts, title, re.I)
+        info = {"exe": row[0], "app": app, "title": title,
+                "project": m.group(1).split(" - ")[-1].strip() if m else ""}
+        if not found or (info["project"] and not found["project"]):
+            found = info
     return found
 
 
@@ -1228,6 +1280,453 @@ def write_presence(status):
 
 def write_offline_presence():
     write_presence({"kind": "offline", "text": "offline"})
+
+
+
+# ================================================================ WORKSPACE (3.0)
+# Projects, outline parts, requests (the order board), review comments and links between projects.
+# Every change is one small event in _hub/ws/<person>.jsonl; the current state is rebuilt by
+# replaying everyone's events in time order. Each person only appends to their own file,
+# so the two PCs never edit the same file.
+WS_DIR = os.path.join(HUB_DIR, "ws")
+os.makedirs(WS_DIR, exist_ok=True)
+SHARED = "Shared"
+TYPES = {
+    "video": {"label": "Video", "apps": "VEGAS", "folders": ["Video", "Audio", "Images", "Graphics", "Exports"],
+              "stages": ["Idea", "Filming", "Editing", "Done"]},
+    "music": {"label": "Music", "apps": "FL Studio", "folders": ["Audio", "Samples", "Exports"],
+              "stages": ["Idea", "Writing", "Mixing", "Done"]},
+    "art": {"label": "Art", "apps": "Krita / Photoshop / Clip Studio", "folders": ["References", "Images", "Exports"],
+            "stages": ["Idea", "Sketch", "Colour", "Done"]},
+    "3d": {"label": "3D", "apps": "Blender", "folders": ["Textures", "References", "Exports"],
+           "stages": ["Idea", "Modelling", "Rendering", "Done"]},
+    "other": {"label": "Other", "apps": "", "folders": ["Files", "Exports"],
+              "stages": ["Idea", "Doing", "Polish", "Done"]},
+}
+REQ_TYPES = ["Sound effect", "Music", "Footage", "Graphic", "Edit", "Writing", "Idea", "Other"]
+WS_LOCK = threading.Lock()
+WS_CACHE = {"sig": None, "state": None}
+
+
+def ws_add(kind, **data):
+    data["kind"] = kind
+    e = append_jsonl(WS_DIR, data)
+    WS_CACHE["sig"] = None
+    return e
+
+
+def ws_events():
+    return read_jsonl_dir(WS_DIR)
+
+
+def _ws_sig():
+    sig = []
+    try:
+        for fn in sorted(os.listdir(WS_DIR)):
+            if fn.endswith(".jsonl") and not is_temp(fn):
+                st_ = os.stat(os.path.join(WS_DIR, fn))
+                sig.append((fn, st_.st_size, int(st_.st_mtime)))
+    except OSError:
+        pass
+    return tuple(sig)
+
+
+def ws_state():
+    """Replay all events -> {projects, parts, requests, comments, links, events}."""
+    sig = _ws_sig()
+    with WS_LOCK:
+        if WS_CACHE["sig"] == sig and WS_CACHE["state"] is not None:
+            return WS_CACHE["state"]
+    evs = ws_events()
+    projects, parts, reqs, comments, links = {}, {}, {}, {}, {}
+    moves = {}
+    for e in read_jsonl_dir(NOTES_DIR):
+        if e.get("kind") == "move" and e.get("from") and e.get("to"):
+            moves[e["from"]] = e["to"]
+
+    def follow(p):
+        seen = 0
+        while p in moves and seen < 20:
+            p, seen = moves[p], seen + 1
+        return p
+
+    for e in evs:
+        k, u, ts = e.get("kind"), e.get("user"), e.get("ts", 0)
+        if k == "proj_new" and e.get("pid") and e["pid"] not in projects:
+            projects[e["pid"]] = {"pid": e["pid"], "name": e.get("name", "Project"), "type": e.get("type", "other"),
+                                  "folder": e.get("folder", e.get("name", "Project")), "by": u, "ts": ts,
+                                  "archived": False}
+        elif k == "proj_set" and e.get("pid") in projects:
+            for f in ("name", "type", "archived", "desc"):
+                if f in e:
+                    projects[e["pid"]][f] = e[f]
+        elif k == "part_new" and e.get("pid") in projects:
+            parts[e["part"]] = {"part": e["part"], "pid": e["pid"], "name": e.get("name", "Part"), "desc": e.get("desc", ""),
+                                "time": e.get("time", ""), "stage": 0, "script": "", "order": e.get("order", ts),
+                                "script_by": None, "script_ts": 0, "deleted": False}
+        elif k == "part_set" and e.get("part") in parts:
+            p = parts[e["part"]]
+            for f in ("name", "desc", "time", "stage", "order", "deleted"):
+                if f in e:
+                    p[f] = e[f]
+            if "script" in e:
+                p["script"], p["script_by"], p["script_ts"] = e["script"], u, ts
+        elif k == "req_new" and e.get("pid") in projects:
+            reqs[e["rid"]] = {"rid": e["rid"], "pid": e["pid"], "part": e.get("part"), "type": e.get("type", "Other"),
+                              "title": e.get("title", ""), "desc": e.get("desc", ""), "to": e.get("to", "anyone"),
+                              "dest": e.get("dest", ""), "refs": e.get("refs", []), "by": u, "ts": ts,
+                              "claimed": None, "status": "open", "thread": [], "takes": 0, "last": ts, "approved": None}
+        elif k.startswith("req_") and e.get("rid") in reqs:
+            r = reqs[e["rid"]]
+            r["last"] = ts
+            item = {"kind": k[4:], "user": u, "ts": ts, "text": e.get("text", ""), "id": e.get("id")}
+            if k == "req_claim":
+                r["claimed"], r["status"] = u, "working"
+            elif k == "req_unclaim":
+                r["claimed"], r["status"] = None, "open"
+            elif k == "req_submit":
+                r["takes"] += 1
+                item["take"] = r["takes"]
+                item["files"] = [follow(f) for f in e.get("files", [])]
+                r["status"] = "review"
+                if not r["claimed"]:
+                    r["claimed"] = u
+            elif k == "req_review":
+                item["verdict"] = e.get("verdict")
+                if e.get("verdict") == "approve":
+                    r["status"], r["approved"] = "done", e.get("take")
+                    item["take"] = e.get("take")
+                    item["files"] = [follow(f) for f in e.get("files", [])]
+                else:
+                    r["status"] = "working" if r["claimed"] else "open"
+            elif k == "req_status":
+                r["status"] = e.get("status", r["status"])
+            elif k == "req_edit":
+                for f in ("title", "desc", "to", "part", "type", "dest"):
+                    if f in e:
+                        r[f] = e[f]
+                continue
+            r["thread"].append(item)
+        elif k == "rev_comment" and e.get("file"):
+            comments[e["id"]] = {"id": e["id"], "file": follow(e["file"]), "user": u, "ts": ts, "text": e.get("text", ""),
+                                 "t": e.get("t"), "x": e.get("x"), "y": e.get("y"), "resolved": False}
+        elif k == "rev_resolve" and e.get("cid") in comments:
+            comments[e["cid"]]["resolved"] = bool(e.get("value", True))
+        elif k == "link_new" and e.get("pid") in projects:
+            links[e["lid"]] = {"lid": e["lid"], "pid": e["pid"], "src": e.get("src"), "cat": e.get("cat", "Any"),
+                               "file": e.get("file"), "target": e.get("target"), "version": e.get("version"),
+                               "vmtime": e.get("vmtime"), "by": u, "ts": ts, "deleted": False}
+        elif k == "link_set" and e.get("lid") in links:
+            for f in ("version", "vmtime", "deleted"):
+                if f in e:
+                    links[e["lid"]][f] = e[f]
+    # numbers per project (#1, #2...) in creation order
+    seq = {}
+    for r in sorted(reqs.values(), key=lambda r: r["ts"]):
+        seq[r["pid"]] = seq.get(r["pid"], 0) + 1
+        r["num"] = seq[r["pid"]]
+    state = {"projects": projects, "parts": {k: v for k, v in parts.items() if not v["deleted"]},
+             "requests": reqs, "comments": comments,
+             "links": {k: v for k, v in links.items() if not v["deleted"]}, "events": evs[-400:]}
+    with WS_LOCK:
+        WS_CACHE["sig"], WS_CACHE["state"] = sig, state
+    return state
+
+
+def project_by_folder(folder):
+    for p in ws_state()["projects"].values():
+        if p["folder"].lower() == (folder or "").lower():
+            return p
+    return None
+
+
+def project_of_path(relpath):
+    first = (relpath or "").split("/")[0]
+    p = project_by_folder(first)
+    return p["pid"] if p else SHARED
+
+
+def proj_dir(pid):
+    if not pid or pid == SHARED:
+        return os.path.join(ROOT, SHARED)
+    p = ws_state()["projects"].get(pid)
+    if not p:
+        raise ValueError("unknown project")
+    return os.path.join(ROOT, p["folder"])
+
+
+def new_project(name, ptype):
+    name = re.sub(r"\s+", " ", (name or "").strip())[:60]
+    if not name:
+        raise ValueError("Give the project a name")
+    ptype = ptype if ptype in TYPES else "other"
+    folder = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name).strip(" .") or "Project"
+    if folder.lower() in ("_hub", "inbox", "shared") or folder.startswith((".", "~")):
+        folder = "Project " + folder
+    base, n = folder, 2
+    while os.path.exists(os.path.join(ROOT, folder)) or project_by_folder(folder):
+        folder, n = "%s %d" % (base, n), n + 1
+    pid = uuid.uuid4().hex[:10]
+    for sub in TYPES[ptype]["folders"]:
+        os.makedirs(os.path.join(ROOT, folder, sub), exist_ok=True)
+    ws_add("proj_new", pid=pid, name=name, type=ptype, folder=folder)
+    return pid
+
+
+def ensure_default_project():
+    """First run on an empty workspace: make one project so the window isn't empty."""
+    if not me() or ws_state()["projects"]:
+        return
+    if read_jsonl_dir(WS_DIR):
+        return
+    try:  # someone else already uses this workspace: wait for their projects to sync instead
+        if any(f.endswith(".json") and f != slug(me()) + ".json" for f in os.listdir(PRESENCE_DIR)):
+            return
+    except OSError:
+        pass
+    new_project("First project", "video")
+
+
+# ---------------------------------------------------------------- outputs + links between projects
+def outputs_of(pid, cat="Any"):
+    """Exported files of a project (newest first), optionally only one category."""
+    try:
+        folder = rel(proj_dir(pid))
+    except ValueError:
+        return []
+    with LIB_LOCK:
+        items = [i for i in LIB["items"] if i["path"].startswith(folder + "/") and i.get("export")]
+    if cat and cat != "Any":
+        items = [i for i in items if i["media"] == cat]
+    return sorted(items, key=lambda i: -i["mtime"])
+
+
+def link_status(l):
+    vers = outputs_of(l["src"], l["cat"]) if not l.get("file") else []
+    newest = vers[0] if vers else None
+    pending = bool(newest and (newest["path"] != l.get("version") or int(newest["mtime"]) != int(l.get("vmtime") or 0)))
+    return {"versions": [{"path": v["path"], "mtime": v["mtime"], "size": v["size"]} for v in vers[:20]],
+            "newest": newest["path"] if newest else None, "update": pending,
+            "has_target": os.path.exists(os.path.join(ROOT, l["target"])) if l.get("target") else False}
+
+
+def link_apply(lid, version_path):
+    l = ws_state()["links"].get(lid)
+    if not l:
+        raise ValueError("unknown link")
+    src = safe_path(version_path)
+    if not os.path.isfile(src):
+        raise ValueError("That version isn't on this PC yet (still syncing?)")
+    target = safe_path(l["target"])
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    if os.path.exists(target):
+        snapshot(l["target"])  # keep the old one in History
+    tmp = target + ".link.tmp"
+    shutil.copyfile(src, tmp)
+    os.replace(tmp, target)
+    mark_written(l["target"])
+    ws_add("link_set", lid=lid, version=version_path, vmtime=os.path.getmtime(src))
+    with LIB_LOCK:
+        LIB["sig"] = None
+
+
+def new_link(pid, src_pid, cat="Any", file=None):
+    st_ = ws_state()
+    if pid not in st_["projects"] or src_pid not in st_["projects"] or pid == src_pid:
+        raise ValueError("Pick two different projects")
+    src = st_["projects"][src_pid]
+    if file:
+        safe_path(file)
+        ext = os.path.splitext(file)[1]
+        version = file
+    else:
+        vers = outputs_of(src_pid, cat)
+        if not vers:
+            raise ValueError("%s has no exports%s yet. Export something into its Exports folder first."
+                             % (src["name"], "" if cat == "Any" else " of that kind"))
+        ext = os.path.splitext(vers[0]["path"])[1]
+        version = vers[0]["path"]
+    nm = re.sub(r'[<>:"/\\|?*]', "", src["name"]).strip() or "linked"
+    target = rel(os.path.join(proj_dir(pid), "Linked", nm + ext))
+    lid = uuid.uuid4().hex[:10]
+    ws_add("link_new", lid=lid, pid=pid, src=src_pid, cat=cat, file=file, target=target)
+    link_apply(lid, version)
+    return lid
+
+
+# ---------------------------------------------------------------- requests
+def req_folder(r):
+    p = ws_state()["projects"].get(r["pid"])
+    nm = re.sub(r'[<>:"/\\|?*]', "", r["title"])[:40].strip() or "request"
+    return rel(os.path.join(ROOT, p["folder"] if p else SHARED, "Requests", "%d %s" % (r["num"], nm)))
+
+
+def approve_request(rid, take, text=""):
+    st_ = ws_state()
+    r = st_["requests"].get(rid)
+    if not r:
+        raise ValueError("unknown request")
+    sub = [t for t in r["thread"] if t["kind"] == "submit" and (take is None or t.get("take") == take)]
+    if not sub:
+        raise ValueError("Nothing to approve yet")
+    sub = sub[-1]
+    moved = []
+    dest_rel = r.get("dest") or ""
+    for f in sub.get("files", []):
+        full = os.path.join(ROOT, f)
+        if not os.path.isfile(full):
+            continue
+        if dest_rel:
+            dest_dir = safe_path(dest_rel)
+        else:
+            dest_dir = auto_dest(os.path.basename(f), None, r["pid"])
+        os.makedirs(dest_dir, exist_ok=True)
+        new = unique_path(dest_dir, os.path.basename(f))
+        shutil.move(full, new)
+        nr = rel(new)
+        record_move(f, nr)
+        mark_written(f)
+        mark_written(nr)
+        add_note(nr, "for #%d %s" % (r["num"], r["title"]), via="request")
+        moved.append(nr)
+    ws_add("req_review", rid=rid, verdict="approve", take=sub.get("take"), files=moved, text=text)
+    with LIB_LOCK:
+        LIB["sig"] = None
+    return moved
+
+
+def request_view(r, st_):
+    p = st_["projects"].get(r["pid"], {})
+    part = st_["parts"].get(r.get("part") or "")
+    d = dict(r)
+    d["project"] = p.get("name")
+    d["part_name"] = part["name"] if part else None
+    return d
+
+
+# ---------------------------------------------------------------- what the window needs
+def ws_view():
+    st_ = ws_state()
+    projects = []
+    for p in sorted(st_["projects"].values(), key=lambda p: p["ts"]):
+        pp = dict(p)
+        pp["stages"] = TYPES.get(p["type"], TYPES["other"])["stages"]
+        pp["type_label"] = TYPES.get(p["type"], TYPES["other"])["label"]
+        pp["exists"] = os.path.isdir(os.path.join(ROOT, p["folder"]))
+        projects.append(pp)
+    parts = sorted(st_["parts"].values(), key=lambda x: x["order"])
+    reqs = [request_view(r, st_) for r in sorted(st_["requests"].values(), key=lambda r: r["ts"])]
+    links = []
+    for l in st_["links"].values():
+        d = dict(l)
+        d.update(link_status(l))
+        links.append(d)
+    comments = sorted(st_["comments"].values(), key=lambda c: c["ts"])
+    return {"projects": projects, "parts": parts, "requests": reqs, "links": links, "comments": comments,
+            "events": st_["events"][-300:], "types": {k: {"label": v["label"], "stages": v["stages"], "apps": v["apps"]}
+                                                       for k, v in TYPES.items()}, "req_types": REQ_TYPES}
+
+
+def ws_post(path, body):
+    """Workspace endpoints. Returns (code, obj) or None if not ours."""
+    b = body
+    if path == "/api/ws/project_new":
+        pid = new_project(b.get("name"), b.get("type"))
+        CONFIG["project"] = pid
+        save_config()
+        return 200, {"ok": True, "pid": pid}
+    if path == "/api/ws/project_set":
+        pid = b.get("pid")
+        data = {k: b[k] for k in ("name", "type", "archived", "desc") if k in b}
+        if "name" in data:
+            data["name"] = str(data["name"]).strip()[:60] or "Project"
+        ws_add("proj_set", pid=pid, **data)
+        return 200, {"ok": True}
+    if path == "/api/ws/select":
+        CONFIG["project"] = b.get("pid")
+        save_config()
+        return 200, {"ok": True}
+    if path == "/api/ws/part_new":
+        pid = b.get("pid")
+        n = sum(1 for p in ws_state()["parts"].values() if p["pid"] == pid)
+        part = uuid.uuid4().hex[:10]
+        ws_add("part_new", pid=pid, part=part, name=(b.get("name") or "Part %d" % (n + 1)).strip()[:80],
+               desc=(b.get("desc") or "")[:2000], time=(b.get("time") or "")[:40], order=now())
+        return 200, {"ok": True, "part": part}
+    if path == "/api/ws/part_set":
+        data = {k: b[k] for k in ("name", "desc", "time", "stage", "script", "order", "deleted") if k in b}
+        if "script" in data:
+            data["script"] = str(data["script"])[:50000]
+        ws_add("part_set", part=b.get("part"), **data)
+        return 200, {"ok": True}
+    if path == "/api/ws/req_new":
+        title = (b.get("title") or "").strip()[:200]
+        if not title:
+            raise ValueError("Say what's needed")
+        rid = uuid.uuid4().hex[:10]
+        ws_add("req_new", rid=rid, pid=b.get("pid"), part=b.get("part") or None, type=b.get("type") or "Other",
+               title=title, desc=(b.get("desc") or "")[:4000], to=b.get("to") or "anyone",
+               dest=(b.get("dest") or "")[:200], refs=[str(x)[:300] for x in (b.get("refs") or [])][:10])
+        return 200, {"ok": True, "rid": rid}
+    if path == "/api/ws/req_act":
+        rid, act = b.get("rid"), b.get("act")
+        if act == "claim":
+            ws_add("req_claim", rid=rid)
+        elif act == "unclaim":
+            ws_add("req_unclaim", rid=rid)
+        elif act == "comment":
+            t = (b.get("text") or "").strip()[:4000]
+            if t:
+                ws_add("req_comment", rid=rid, text=t)
+        elif act == "submit":
+            files = [f for f in (b.get("files") or []) if isinstance(f, str)][:50]
+            for f in files:
+                safe_path(f)
+            ws_add("req_submit", rid=rid, files=files, text=(b.get("text") or "")[:50000])
+        elif act == "changes":
+            ws_add("req_review", rid=rid, verdict="changes", text=(b.get("text") or "")[:4000])
+        elif act == "approve":
+            return 200, {"ok": True, "files": approve_request(rid, b.get("take"), (b.get("text") or "")[:4000])}
+        elif act in ("cancel", "reopen"):
+            ws_add("req_status", rid=rid, status="cancelled" if act == "cancel" else "open")
+        elif act == "edit":
+            data = {k: b[k] for k in ("title", "desc", "to", "part", "type", "dest") if k in b}
+            ws_add("req_edit", rid=rid, **data)
+        else:
+            raise ValueError("unknown action")
+        return 200, {"ok": True}
+    if path == "/api/ws/req_folder":
+        r = ws_state()["requests"].get(b.get("rid"))
+        if not r:
+            raise ValueError("unknown request")
+        return 200, {"folder": req_folder(r)}
+    if path == "/api/ws/comment":
+        f = b.get("file", "")
+        safe_path(f)
+        t = (b.get("text") or "").strip()[:2000]
+        if not t:
+            raise ValueError("Write a comment")
+        data = {"file": f, "text": t}
+        for k in ("t", "x", "y"):
+            if b.get(k) is not None:
+                data[k] = float(b[k])
+        ws_add("rev_comment", **data)
+        return 200, {"ok": True}
+    if path == "/api/ws/comment_resolve":
+        ws_add("rev_resolve", cid=b.get("cid"), value=bool(b.get("value", True)))
+        return 200, {"ok": True}
+    if path == "/api/ws/link_new":
+        lid = new_link(b.get("pid"), b.get("src"), b.get("cat") or "Any", b.get("file") or None)
+        return 200, {"ok": True, "lid": lid}
+    if path == "/api/ws/link_apply":
+        link_apply(b.get("lid"), b.get("version"))
+        return 200, {"ok": True}
+    if path == "/api/ws/link_del":
+        ws_add("link_set", lid=b.get("lid"), deleted=True)
+        return 200, {"ok": True}
+    if path == "/api/ws/outputs":
+        return 200, {"items": outputs_of(b.get("pid"), b.get("cat") or "Any")[:50]}
+    return None
 
 
 # ---------------------------------------------------------------- self-update
@@ -1369,7 +1868,7 @@ STATE_LOCK = threading.Lock()
 def compute_status(vegas, ui_seen, view):
     if vegas:
         proj = vegas.get("project") or "a project"
-        return {"kind": "editing", "text": "in VEGAS, " + proj, "project": vegas.get("project") or ""}
+        return {"kind": "editing", "text": "in %s, %s" % (vegas.get("app", "VEGAS"), proj), "project": vegas.get("project") or ""}
     if now() - ui_seen < 90:
         return {"kind": "hub", "text": "browsing " + (view or "the hub")}
     return {"kind": "online", "text": "online"}
@@ -1390,6 +1889,8 @@ def monitor():
             if tick % 2 == 0:
                 sort_inbox()
             if me():
+                if tick % 10 == 1:
+                    ensure_default_project()
                 watch_poll()
                 watch_flush()
                 status = compute_status(vegas, ui_seen, view)
@@ -1415,6 +1916,27 @@ def monitor():
 
 
 # ---------------------------------------------------------------- API
+def folders_map(wsv):
+    """Sub-folders (2 levels) of every project and Shared, for the "Put in" lists."""
+    out = {}
+    for pid, folder in [(p["pid"], p["folder"]) for p in wsv["projects"] if not p.get("archived")] + [(SHARED, SHARED)]:
+        base = os.path.join(ROOT, folder)
+        lst = [folder]
+        try:
+            for a in sorted(os.listdir(base)):
+                fa = os.path.join(base, a)
+                if not os.path.isdir(fa) or a.startswith((".", "~", "_")):
+                    continue
+                lst.append(folder + "/" + a)
+                for b_ in sorted(os.listdir(fa))[:40]:
+                    if os.path.isdir(os.path.join(fa, b_)) and not b_.startswith((".", "~")):
+                        lst.append(folder + "/" + a + "/" + b_)
+        except OSError:
+            pass
+        out[pid] = lst[:150]
+    return out
+
+
 def build_state():
     log, chat = all_log(), all_chat()
     people = read_presence()
@@ -1422,7 +1944,12 @@ def build_state():
         s = dict(STATE)
     rd = CONFIG.get("read") or {}
     unread_chat = sum(1 for m in chat if m.get("user") != me() and m.get("ts", 0) > rd.get("chat", 0))
-    unread_log = sum(1 for e in log if e.get("user") != me() and e.get("ts", 0) > rd.get("log", 0))
+    wsv = ws_view()
+    unread_log = sum(1 for e in log + [x for x in wsv["events"] if x.get("kind") not in ("part_set",)]
+                     if e.get("user") != me() and e.get("ts", 0) > rd.get("log", 0))
+    mine_reqs = sum(1 for r in wsv["requests"] if r["status"] in ("open", "working", "review") and
+                    ((r["status"] == "review" and r["by"] == me()) or
+                     (r["status"] != "review" and r["to"] in (me(), "anyone") and r["by"] != me() and r["claimed"] in (None, me()))))
     # warn when both people have the same project open
     clash = None
     mine = (s["vegas"] or {}).get("project")
@@ -1436,7 +1963,8 @@ def build_state():
     return {
         "me": me(), "configured": bool(me()), "now": now(), "root": ROOT, "version": HUB_VERSION,
         "ui": ui_hash(), "update": dict(UPDATE), "people": people, "my_vegas": s["vegas"], "clash": clash,
-        "chat": chat[-300:], "log": log[-300:], "unread": {"chat": unread_chat, "log": unread_log},
+        "chat": chat[-300:], "log": log[-300:], "unread": {"chat": unread_chat, "log": unread_log, "requests": mine_reqs},
+        "ws": wsv, "project": current_project(), "shared": SHARED, "folders": folders_map(wsv),
         "read": rd, "lib_gen": LIB["gen"], "inbox": inbox_files_count(), "upload": up,
         "syncthing": s["syncthing"], "sync": dict(SYNC), "phone": phone_state(),
         "settings": {"auto_sort": CONFIG.get("auto_sort", True), "date_folders": CONFIG.get("date_folders", True),
@@ -1484,8 +2012,11 @@ def handle_post(path, body):
     if not me():
         return 400, {"error": "not set up"}
 
+    r = ws_post(path, body)
+    if r is not None:
+        return r
     if path == "/api/library":
-        return 200, library(body.get("cat"), body.get("q"))
+        return 200, library(body.get("cat"), body.get("q"), body.get("project"))
     if path == "/api/file":
         return 200, file_detail(body.get("path", ""))
     if path == "/api/note":
@@ -1652,7 +2183,7 @@ class Handler(BaseHTTPRequestHandler):
                 if total < 0:
                     return self._json(411, {"error": "Missing file size"})
                 saved = receive_upload(self.rfile, total, q.get("name"), q.get("dest", "auto"),
-                                       q.get("lm"), q.get("batch"), q.get("fnote"))
+                                       q.get("lm"), q.get("batch"), q.get("fnote"), q.get("project"))
                 return self._json(200, {"ok": True, "saved": saved})
             except Exception as e:
                 return self._json(500, {"error": str(e)})
@@ -1774,8 +2305,11 @@ class PhoneHandler(BaseHTTPRequestHandler):
         elif u.path == "/api/hello":
             if self._check():
                 others = [p["user"] for p in read_presence() if p["user"] != me() and p["live"] != "offline"]
+                projs = [{"pid": p["pid"], "name": p["name"]} for p in sorted(ws_state()["projects"].values(), key=lambda p: p["ts"])
+                         if not p.get("archived")] + [{"pid": SHARED, "name": "Shared (all projects)"}]
                 self._json(200, {"ok": True, "pc": me() or "the PC", "free": shutil.disk_usage(ROOT).free,
-                                 "online": others, "tags": ["B-roll", "Interview", "Music", "SFX", "Best", "Don't use"]})
+                                 "online": others, "tags": ["B-roll", "Interview", "Music", "SFX", "Best", "Don't use"],
+                                 "projects": projs, "project": current_project()})
         else:
             self._json(404, {"error": "not found"})
 
@@ -1789,7 +2323,7 @@ class PhoneHandler(BaseHTTPRequestHandler):
                 total = int(self.headers.get("Content-Length") or -1)
                 if total < 0:
                     return self._json(411, {"error": "Missing file size"})
-                saved = receive_upload(self.rfile, total, q.get("name"), "auto", q.get("lm"), q.get("batch"), q.get("fnote"))
+                saved = receive_upload(self.rfile, total, q.get("name"), "auto", q.get("lm"), q.get("batch"), q.get("fnote"), q.get("project"))
                 return self._json(200, {"ok": True, "saved": saved})
             except Exception as e:
                 try:
