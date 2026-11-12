@@ -150,6 +150,9 @@ label.ck{display:flex;gap:6px;align-items:center}
 .dropzone.show{display:flex}
 .toast{position:fixed;right:14px;bottom:34px;padding:8px 12px;display:none;z-index:70;max-width:380px}
 .empty{padding:18px;color:var(--dim)}
+.rcur{position:fixed;z-index:40;pointer-events:none;transition:left .09s linear,top .09s linear}
+.rcur span{position:absolute;left:12px;top:15px;background:#b48cff;color:#000;font-size:11px;padding:0 4px;border:1px solid #000;white-space:nowrap}
+#typing{font-size:12px;color:var(--dim);min-height:16px;padding:0 4px;font-style:italic}
 @media (max-width:1100px){.right{width:250px}.left{width:165px}}
 </style></head>
 <body>
@@ -196,11 +199,13 @@ label.ck{display:flex;gap:6px;align-items:center}
   <div class="right out">
    <div class="people in" id="people"></div>
    <div class="feed in" id="feed"></div>
+   <div id="typing" aria-live="polite"></div>
    <div style="display:flex;gap:6px"><label for="say" class="dim" style="align-self:center">Say:</label><input id="say" class="field" style="flex:1;min-width:0"><button class="btn" id="sendBtn">Send</button></div>
   </div>
  </div>
  <div class="status">
   <div class="in" id="stSync" style="flex:1">Sync: starting...</div>
+  <div class="in" id="stLive" title="Instant chat and cursors">Live: off</div>
   <div class="in" id="stVer">v-</div>
  </div>
 </div>
@@ -208,6 +213,7 @@ label.ck{display:flex;gap:6px;align-items:center}
 <input type="file" id="takePick" multiple style="display:none">
 <div class="dropzone" id="dropzone">Drop files to add them</div>
 <div class="toast out" id="toast"></div>
+<div id="cursors"></div>
 <div class="modalbg" id="modal"><div class="dlg out" id="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
  <div class="titlebar"><span id="dlgTitle">Dialog</span><button class="btn sm" id="dlgX" aria-label="Close" style="min-height:18px;padding:0 6px">×</button></div>
  <div class="body" id="dlgBody"></div>
@@ -282,11 +288,12 @@ function settingsDlg(first){const st=S?S.settings:{};
    <label class="ck"><input type="checkbox" id="sSort" ${st.auto_sort!==false?"checked":""}> Sort files dropped in the Inbox folder automatically (into the project you have open)</label>
    <label class="ck"><input type="checkbox" id="sDate" ${st.date_folders!==false?"checked":""}> Put video and photos in a folder per day</label></fieldset>
   ${st.windows?`<label class="ck"><input type="checkbox" id="sStart" ${st.autostart?"checked":""}> Start RotLab with Windows</label>`:""}
+  <label class="ck"><input type="checkbox" id="sLive" ${st.live!==false?"checked":""}> Live: instant chat, "is typing" and seeing each other's mouse (sent encrypted through a free public relay)</label>
   <label class="ck"><input type="checkbox" id="sGh" ${st.github_updates!==false?"checked":""}> Get new versions from GitHub automatically</label>
   <details><summary class="dim">Advanced</summary><div style="margin-top:6px"><label for="sKey">Syncthing API key (only if RotLab can't find your own Syncthing):</label><input id="sKey" class="field" style="width:100%"></div></details>
   <div class="dim" style="font-size:12px">Workspace folder: ${esc(S?S.root:"")}</div>
   <div class="btns"><button class="btn" id="sOk">OK</button>${first?"":'<button class="btn" id="sCancel">Cancel</button>'}</div>`,{locked:first});
- $("sOk").onclick=async()=>{const b={name:$("sName").value,auto_sort:$("sSort").checked,date_folders:$("sDate").checked,github_updates:$("sGh").checked};if($("sStart"))b.autostart=$("sStart").checked;if($("sKey").value.trim())b.api_key=$("sKey").value.trim();
+ $("sOk").onclick=async()=>{const b={name:$("sName").value,auto_sort:$("sSort").checked,date_folders:$("sDate").checked,github_updates:$("sGh").checked,live:$("sLive").checked};if($("sStart"))b.autostart=$("sStart").checked;if($("sKey").value.trim())b.api_key=$("sKey").value.trim();
   try{await api("/api/setup",b);closeDlg();tick()}catch(e){toast(e.message)}};
  if($("sCancel"))$("sCancel").onclick=closeDlg;$("sName").onkeydown=e=>{if(e.key==="Enter")$("sOk").click()};
 }
@@ -382,6 +389,8 @@ function forYou(){const it=[];
  for(const [f,cs] of Object.entries(byFile))it.push({k:"comments",t:`${cs.length} new comment${cs.length>1?"s":""} on ${short(f)}`,go:()=>gotoFile(f),pid:projOfPath(f),ts:Math.max(...cs.map(c=>c.ts))});
  for(const l of W.links){if(l.waiting)it.push({k:"waiting",t:`New ${short(l.newest)} from ${pname(l.src)} goes into ${pname(l.pid)} when it's closed`,go:()=>{selectProject(l.pid);linksDlg()},pid:l.pid,ts:0});
   else if(l.pinned&&l.update)it.push({k:"new version",t:`${pname(l.src)} has a newer ${short(l.newest)} (you kept an older one)`,go:()=>{selectProject(l.pid);linkVersionsDlg(l.lid)},pid:l.pid,ts:0})}
+ const ack=LS.get("expack",{});
+ for(const x of (W.auto_exports||[]))if(x.value&&x.user===S.me&&!ack[x.file])it.push({k:"render",t:`${short(x.file)} counted as a new export of ${pname(projOfPath(x.file))}`,go:()=>{ack[x.file]=1;LS.set("expack",ack);gotoFile(x.file)},pid:projOfPath(x.file),ts:x.ts});
  if(S.inbox&&!S.settings.auto_sort)it.push({k:"inbox",t:`${S.inbox} file(s) waiting in the Inbox folder`,go:()=>act("sortinbox"),ts:0});
  return it.sort((a,b)=>b.ts-a.ts)}
 function renderForYou(){const it=forYou();let h;
@@ -564,7 +573,7 @@ async function selectFile(path,keep){selPath=path;document.querySelectorAll("#li
  let d;try{d=await api("/api/file",{path})}catch(e){if($("detail"))$("detail").style.display="none";selPath=null;return}
  const fs=LS.get("fseen",{});fs[path]=Date.now()/1000;LS.set("fseen",fs);
  const cs=W.comments.filter(c=>c.file===path);
- const sig=JSON.stringify([path,d.notes.length,d.tags,d.history_count,cs.map(c=>[c.id,c.resolved]),W.links.length]);if(keep&&sig===selSig)return;selSig=sig;
+ const sig=JSON.stringify([path,d.notes.length,d.tags,d.history_count,cs.map(c=>[c.id,c.resolved]),W.links.length,d.cat]);if(keep&&sig===selSig)return;selSig=sig;
  const m0=$("dMedia"),keepT=m0&&m0.dataset.p===path?m0.currentTime:null,prev=$("dNote")&&$("dNote").dataset.p===path?$("dNote").value:"";
  const src="/media?path="+encodeURIComponent(path),timed=d.media==="Video"||d.media==="Audio",img=isImg(d.name);let pv;
  if(d.media==="Video")pv=`<video id="dMedia" data-p="${esc(path)}" src="${src}" controls preload="metadata"></video>`;
@@ -575,7 +584,8 @@ async function selectFile(path,keep){selPath=path;document.querySelectorAll("#li
  const lk=linkOfTarget(path),usedIn=W.links.filter(l=>l.file===path||(l.version===path));
  $("detail").innerHTML=`<div style="flex:1 1 380px;min-width:260px;display:flex;flex-direction:column;gap:4px;min-height:0"><div class="stage">${pv}</div>${timed?'<div class="marks" id="marks"></div>':""}</div>
   <div class="dside"><div><b>${esc(d.name)}</b> <span class="dim">· ${size(d.size)}${d.by?" · added by "+esc(who(d.by)):""}</span>
-   ${lk?`<div style="font-size:12px;color:#9db8ff">Linked from ${esc(pname(lk.src))} · ${esc(linkLabel(lk))} <a data-lver="${lk.lid}">versions</a></div>`:""}${usedIn.length?`<div class="dim" style="font-size:12px">Used in ${usedIn.map(l=>esc(pname(l.pid))).join(", ")}</div>`:""}</div>
+   ${lk?`<div style="font-size:12px;color:#9db8ff">Linked from ${esc(pname(lk.src))} · ${esc(linkLabel(lk))} <a data-lver="${lk.lid}">versions</a></div>`:""}${usedIn.length?`<div class="dim" style="font-size:12px">Used in ${usedIn.map(l=>esc(pname(l.pid))).join(", ")}</div>`:""}
+   ${["Video","Audio","Images","Graphics"].includes(d.media)&&!lk?`<div class="dim" style="font-size:12px">${d.cat==="Exports"?`Export of ${esc(pname(projOfPath(path)))}${(W.auto_exports||[]).some(x=>x.file===path&&x.value)?" (spotted as a render"+(((W.auto_exports||[]).find(x=>x.file===path)||{}).app?" from "+esc((W.auto_exports||[]).find(x=>x.file===path).app):"")+")":""} · <a data-exp="0">not an export</a>`:`<a data-exp="1">mark as an export</a> <span class="dim">(finished versions other projects can link to)</span>`}</div>`:""}</div>
    <div style="display:flex;gap:5px;flex-wrap:wrap"><button class="btn sm" id="dOpen">${d.app?"Open in "+esc(d.app):"Open"}</button>${d.app?`<button class="btn sm" id="dHist">History (${d.history_count})</button>`:""}<button class="btn sm" id="dShow">Show in folder</button><button class="btn sm" id="dUse">Use in...</button><button class="btn sm" id="dReq">Request...</button></div>
    <div class="chips" id="dTags">${TAGS.concat(d.tags.filter(t=>!TAGS.includes(t))).map(t=>`<button class="chip ${d.tags.includes(t)?"on":""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}<button class="chip" id="dTagAdd">+ tag</button></div>
    <div class="cmts out">${all.length?all.map(c=>`<div class="cmt ${c.resolved?"res":""}"><span class="dim" style="min-width:34px;font-size:12px">${c.t!=null?`<a data-seek="${c.t}">${dur(c.t)}</a>`:c.x!=null?"#"+(cs.filter(z=>z.x!=null).indexOf(c)+1):""}</span><span style="flex:1"><b>${esc(who(c.user))}</b>: ${esc(c.text)} <span class="dim" style="font-size:11px">${esc(ago(c.ts))}${c.via==="upload"?" · upload note":""}</span></span>${c.note?"":`<button class="btn sm" data-mkreq="${c.id}" title="Make a request from this">→ req</button><button class="btn sm" data-resolve="${c.id}" data-v="${c.resolved?0:1}">${c.resolved?"Undo":"Done"}</button>`}</div>`).join(""):`<div class="dim" style="font-size:12px">No comments yet.${timed?" Pause anywhere and comment to mark that moment.":img?" Click the picture to pin a comment to a spot.":""}</div>`}</div>
@@ -584,6 +594,7 @@ async function selectFile(path,keep){selPath=path;document.querySelectorAll("#li
  $("dOpen").onclick=()=>api("/api/open",{path}).catch(e=>toast(e.message));$("dShow").onclick=()=>api("/api/reveal",{path}).catch(e=>toast(e.message));
  if($("dHist"))$("dHist").onclick=()=>historyDlg(path);$("dUse").onclick=()=>useInDlg(path);$("dReq").onclick=()=>reqNewDlg({ref:path});
  $("detail").querySelectorAll("[data-lver]").forEach(a=>a.onclick=()=>linkVersionsDlg(a.dataset.lver));
+ $("detail").querySelectorAll("[data-exp]").forEach(a=>a.onclick=async()=>{await api("/api/ws/export_mark",{file:path,value:a.dataset.exp==="1"});selSig="";libGen=-1;await tick();setTimeout(()=>{selSig="";selectFile(path,true)},2500)});
  const tagsNow=()=>[...$("dTags").querySelectorAll(".chip.on")].map(b=>b.dataset.tag);
  $("dTags").querySelectorAll("[data-tag]").forEach(b=>b.onclick=async()=>{b.classList.toggle("on");await api("/api/tags",{file:path,tags:tagsNow()});selSig="";libGen=-1;tick()});
  $("dTagAdd").onclick=async()=>{const t=prompt("New tag:");if(t&&t.trim()){await api("/api/tags",{file:path,tags:tagsNow().concat([t.trim()])});selSig="";libGen=-1;tick()}};
@@ -665,7 +676,8 @@ function wsLogHtml(e){const u=`<b>${esc(who(e.user))}</b>`,r=W.requests.find(x=>
   case"link_new":return `${u} linked ${e.file?fileLink(e.file):esc(pname(e.src))} into ${esc(pname(e.pid))}`;case"link_set":return e.version&&!e.initial?(e.auto?`${esc(short(e.version))} was updated in the linked project`:`${u} switched a linked file to ${esc(short(e.version))}`):null}return null}
 function linkify(t){let h=esc(t);h=h.replace(/(^|\s)#(\d{1,4})\b/g,(m,s,n)=>{const r=W.requests.find(x=>x.pid===pid&&x.num===+n);return r?`${s}<a data-ticket="${r.rid}">#${n}</a>`:m});return h}
 function renderFeed(scrollEnd){const box=$("feed"),atEnd=box.scrollHeight-box.scrollTop-box.clientHeight<30,rd=S.read||{};if(readAt===null)readAt=Math.min(rd.chat||0,rd.log||0);
- let rows=S.chat.map(m=>({ts:m.ts,user:m.user,msg:true,_h:`<b>${esc(who(m.user))}</b>: ${linkify(m.text)}`}));
+ liveChats=liveChats.filter(l=>Date.now()/1000-l.ts<900&&!S.chat.some(m=>m.user===l.user&&m.text===l.text&&Math.abs(m.ts-l.ts)<600));
+ let rows=S.chat.concat(liveChats).map(m=>({ts:m.ts,user:m.user,msg:true,_h:`<b>${esc(who(m.user))}</b>: ${linkify(m.text)}`}));
  if(!msgOnly)rows=rows.concat(S.log.map(e=>({ts:e.ts,user:e.user,id:e.id,_h:logHtml(e)})),W.events.map(e=>({ts:e.ts,user:e.user,_h:wsLogHtml(e)})));
  rows=rows.filter(e=>e._h).sort((a,b)=>a.ts-b.ts).slice(-300);
  let h="",last="",div=false,run=[];
@@ -682,7 +694,8 @@ $("feed").addEventListener("click",async e=>{const a=e.target.closest("a");if(!a
  if(a.dataset.go)gotoFile(a.dataset.go);else if(a.dataset.ticket)ticketDlg(a.dataset.ticket);
  else if(a.dataset.grp){openGroups.has(a.dataset.grp)?openGroups.delete(a.dataset.grp):openGroups.add(a.dataset.grp);$("feed")._last="";renderFeed(false)}
  else if(a.dataset.undel){try{await api("/api/restore_deleted",{file:a.dataset.undel});toast("Restored")}catch(err){toast(err.message)}}});
-async function sendChat(){const t=$("say").value.trim();if(!t)return;$("say").value="";await api("/api/chat",{text:t}).catch(e=>toast(e.message));tick().then(()=>renderFeed(true))}
+async function sendChat(){const t=$("say").value.trim();if(!t)return;$("say").value="";try{await api("/api/chat",{text:t});Live.send({t:"chat",u:S.me,text:t,ts:Date.now()/1000})}catch(e){toast(e.message)}tick().then(()=>renderFeed(true))}
+let typT=0;$("say").addEventListener("input",()=>{if(Date.now()-typT>2500&&$("say").value.trim()){typT=Date.now();Live.send({t:"typing",u:S.me})}});
 $("sendBtn").onclick=sendChat;$("say").onkeydown=e=>{if(e.key==="Enter")sendChat()};
 
 /* ---------------- banners, status ---------------- */
@@ -700,11 +713,76 @@ function renderStatus(){const st=S.syncthing,sy=S.sync||{};let t;
  else{const f=st.folder,linked=(st.devices||[]).filter(d=>d.shared),con=linked.filter(d=>d.connected);t=!linked.length?"Sync: not linked with anyone yet":(con.length?"Synced with "+con.map(d=>d.name).join(", "):"Other PC offline")+(f?(f.needFiles>0?" · syncing "+f.needFiles+" files":" · up to date"):"")}
  const up=S.upload;if(up&&up.total)t+=` · receiving ${up.name} ${Math.floor(up.got/up.total*100)}%`;
  $("stSync").textContent=t;$("stVer").textContent="v"+S.version;
+ $("stLive").textContent="Live: "+({on:Object.keys(remoteCur).length||Date.now()-Live.lastIn<120000?"connected":"on",connecting:"connecting...",retrying:"can't reach the relay, retrying",off:"off",unsupported:"not supported here"})[Live.status];
  $("title").textContent="RotLab: "+pname(pid);document.title=(S.unread.chat?"("+S.unread.chat+") ":"")+"RotLab"}
 let lastSeenTs=null;
 function notify(){const evs=S.chat.concat(W.events.filter(e=>["req_new","req_submit"].includes(e.kind))).filter(e=>e.user!==S.me);const newest=evs.reduce((a,e)=>Math.max(a,e.ts),0);
  if(lastSeenTs!==null&&!focused)for(const e of evs.filter(e=>e.ts>lastSeenTs).slice(-3)){const body=e.kind?(wsLogHtml(e)||"").replace(/<[^>]+>/g,""):e.user+": "+e.text;if(window.Notification&&Notification.permission==="granted")new Notification("RotLab",{body})}
  lastSeenTs=Math.max(lastSeenTs||0,newest)}
+
+/* ---------------- live layer: instant chat, typing, cursor (LIVE-START) ---------------- */
+function makeLive(o){
+ const enc=new TextEncoder(),dec=new TextDecoder();
+ let ws=null,key=null,topic=null,keyHex=null,bi=0,buf=new Uint8Array(0),ping=null,status="off",retry=null,want=false,backoff=1000,lastIn=0;
+ const L={get status(){return status},get lastIn(){return lastIn}};
+ const str=s=>{const b=enc.encode(s);return [b.length>>8,b.length&255,...b]};
+ const vlen=n=>{const o=[];do{let d=n%128;n=Math.floor(n/128);if(n>0)d|=128;o.push(d)}while(n>0);return o};
+ const pkt=(h,body)=>new Uint8Array([h,...vlen(body.length),...body]);
+ const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("");
+ const setS=s=>{if(status!==s){status=s;o.onstatus&&o.onstatus(s)}};
+ async function setup(k){keyHex=k;const raw=new Uint8Array(k.match(/../g).map(h=>parseInt(h,16)));
+  key=await crypto.subtle.importKey("raw",raw,"AES-GCM",false,["encrypt","decrypt"]);
+  topic="rotlab/v1/"+hex(await crypto.subtle.digest("SHA-256",raw)).slice(0,32)}
+ function connect(){if(!want||ws)return;const url=o.brokers[bi%o.brokers.length];setS("connecting");
+  try{ws=new WebSocket(url,"mqtt")}catch(e){return fail()}
+  ws.binaryType="arraybuffer";buf=new Uint8Array(0);
+  ws.onopen=()=>{const cid="rl"+Math.random().toString(36).slice(2,12);
+   ws.send(pkt(0x10,[...str("MQTT"),4,2,0,60,...str(cid)]))};
+  ws.onmessage=ev=>{const d=new Uint8Array(ev.data),n=new Uint8Array(buf.length+d.length);n.set(buf);n.set(d,buf.length);buf=n;parse()};
+  const me_=ws;let done=false;const lost=()=>{if(done)return;done=true;clearTimeout(to);clearInterval(ping);if(ws===me_){if(status==="connecting")bi++;try{me_.close()}catch(e){}fail()}};
+  const to=setTimeout(()=>{if(status==="connecting")lost()},10000);
+  ws.onclose=lost;ws.onerror=lost}
+ function fail(){ws=null;setS(want?"retrying":"off");clearTimeout(retry);if(want){retry=setTimeout(connect,bi%o.brokers.length?300:backoff);if(!(bi%o.brokers.length))backoff=Math.min(backoff*2,60000)}}
+ function parse(){while(buf.length>=2){let m=1,len=0,i=1,b;do{if(i>=buf.length)return;b=buf[i++];len+=(b&127)*m;m*=128}while(b&128);
+  if(buf.length<i+len)return;const h=buf[0],body=buf.slice(i,i+len);buf=buf.slice(i+len);const t=h>>4;
+  if(t===2){if(body[1]!==0){ws.close();return}ws.send(pkt(0x82,[0,1,...str(topic),0]));backoff=1000;setS("on");ping=setInterval(()=>{try{ws.send(new Uint8Array([0xC0,0]))}catch(e){}},45000);o.onconnect&&o.onconnect()}
+  else if(t===3){const tl=(body[0]<<8)|body[1];let p=2+tl;if((h>>1)&3)p+=2;got(body.slice(p))}}}
+ async function got(payload){try{if(payload.length<13)return;const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:payload.slice(0,12)},key,payload.slice(12));
+  const m=JSON.parse(dec.decode(pt));if(m.from===o.id)return;lastIn=Date.now();o.onmessage&&o.onmessage(m)}catch(e){}}
+ L.send=async m=>{if(status!=="on"||!ws)return false;m.from=o.id;const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv},key,enc.encode(JSON.stringify(m))));
+  const pl=new Uint8Array(12+ct.length);pl.set(iv);pl.set(ct,12);try{ws.send(pkt(0x30,[...str(topic),...pl]));return true}catch(e){return false}};
+ L.update=async info=>{if(!info||!info.enabled){want=false;if(ws)try{ws.close()}catch(e){}setS("off");return}
+  if(typeof crypto==="undefined"||!crypto.subtle||typeof WebSocket==="undefined"){setS("unsupported");return}
+  if(info.key!==keyHex){if(ws)try{ws.close()}catch(e){}await setup(info.key);o.brokers=info.brokers}
+  want=true;connect()};
+ return L}
+/* (LIVE-END) */
+const ME_ID=Math.random().toString(36).slice(2,10);
+let liveChats=[],typingUntil={},remoteCur={};
+const Live=makeLive({id:ME_ID,brokers:[],
+ onstatus:()=>{if(S)renderStatus()},
+ onconnect:()=>Live.send({t:"hi",u:S&&S.me}),
+ onmessage:m=>{if(!S||m.u===S.me)return;
+  if(m.t==="chat"){liveChats.push({ts:m.ts,user:m.u,text:m.text});typingUntil[m.u]=0;renderFeed(false);renderTyping();
+   if(!focused&&window.Notification&&Notification.permission==="granted")new Notification("RotLab",{body:m.u+": "+m.text});lastSeenTs=Math.max(lastSeenTs||0,m.ts)}
+  else if(m.t==="typing"){typingUntil[m.u]=Date.now()+4000;renderTyping()}
+  else if(m.t==="cur"){remoteCur[m.u]=Object.assign(m,{at:Date.now()});drawCursors()}
+  else if(m.t==="bye"){delete remoteCur[m.u];drawCursors()}}});
+function renderTyping(){const who_=Object.keys(typingUntil).filter(u=>typingUntil[u]>Date.now());$("typing").textContent=who_.length?who_.join(", ")+" is typing...":"";if(who_.length)setTimeout(renderTyping,4100)}
+/* cursor: position is sent relative to the middle column, so different window sizes still line up */
+let curT=0,curLast=null;
+document.addEventListener("mousemove",e=>{if(Live.status!=="on"||!S)return;const r=document.querySelector(".center").getBoundingClientRect();
+ const x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height,inside=x>=0&&x<=1&&y>=0&&y<=1;curLast={x,y,inside};
+ const t=Date.now();if(t-curT<80)return;curT=t;sendCur()});
+function sendCur(){if(!curLast)return;Live.send({t:"cur",u:S.me,pid,area,dlg:dlgOpen(),x:+curLast.x.toFixed(4),y:+curLast.y.toFixed(4),inside:curLast.inside})}
+document.addEventListener("mouseleave",()=>{if(Live.status==="on"&&S)Live.send({t:"cur",u:S.me,pid,area,inside:false,x:0,y:0})});
+window.addEventListener("beforeunload",()=>{try{Live.send({t:"bye",u:S.me})}catch(e){}});
+function drawCursors(){const box=$("cursors"),r=document.querySelector(".center").getBoundingClientRect();let h="";
+ for(const [u,c] of Object.entries(remoteCur)){if(Date.now()-c.at>6000||!c.inside||c.pid!==pid||c.area!==area)continue;
+  h+=`<div class="rcur" style="left:${r.left+c.x*r.width}px;top:${r.top+c.y*r.height}px"><svg width="14" height="20" viewBox="0 0 14 20" aria-hidden="true"><path d="M1 1 L1 16 L5 12 L8 19 L10 18 L7 11 L13 11 Z" fill="#b48cff" stroke="#000"/></svg><span>${esc(u)}</span></div>`}
+ if(box._h!==h){box.innerHTML=h;box._h=h}}
+setInterval(drawCursors,1500);
 
 /* ---------------- main loop ---------------- */
 function renderAll(force){if(!S||!S.configured)return;renderProjects();renderForYou();renderTabs();renderCenter(force);renderPeople();renderStatus();renderFeed(false);renderBanners();
@@ -714,7 +792,7 @@ async function tick(){
  try{const r=await fetch("/api/state?focused="+(focused&&!document.hidden?1:0));S=await r.json()}catch(e){$("stSync").textContent="RotLab not responding...";return}
  if(uiHash===null)uiHash=S.ui;else if(S.ui&&S.ui!==uiHash&&!dlgOpen()&&!(document.activeElement&&/INPUT|TEXTAREA/.test(document.activeElement.tagName))){location.reload();return}
  if(!S.configured){if(!dlgOpen())settingsDlg(true);return}
- W=S.ws;if(!pid||(pid!==S.shared&&!W.projects.some(p=>p.pid===pid&&!p.archived)))pid=S.project;
+ W=S.ws;Live.update(S.live);if(!pid||(pid!==S.shared&&!W.projects.some(p=>p.pid===pid&&!p.archived)))pid=S.project;
  if(focused&&!document.hidden)markSeen();
  renderAll(false);notify();
  if(area==="files"&&(!lib||S.lib_gen!==libGen))loadLib(true);

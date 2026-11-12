@@ -39,7 +39,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "3.1"
+HUB_VERSION = "3.2"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -128,17 +128,25 @@ def media_of(relpath):
     return "Other"
 
 
-def is_export(relpath):
+def is_export(relpath, marks=None):
+    if media_of(relpath) not in ("Video", "Audio", "Images", "Graphics"):
+        return False
+    try:
+        m = (marks if marks is not None else ws_state()["exports"]).get(relpath)
+    except Exception:
+        m = None
+    if m is not None:
+        return m["value"]
     parts = relpath.replace("\\", "/").lower().split("/")[:-1]
-    return any(x in EXPORT_DIRS for x in parts) and media_of(relpath) in ("Video", "Audio", "Images", "Graphics")
+    return any(x in EXPORT_DIRS for x in parts)
 
 
 def is_project_file(relpath):
     return os.path.splitext(relpath)[1].lower() in PROJECT_APPS
 
 
-def category_of(relpath):
-    if is_export(relpath):
+def category_of(relpath, marks=None):
+    if is_export(relpath, marks):
         return "Exports"
     return media_of(relpath)
 
@@ -690,6 +698,10 @@ LIB_LOCK = threading.Lock()
 
 def scan_library():
     items = []
+    try:
+        marks = ws_state()["exports"]
+    except Exception:
+        marks = {}
     for dirpath, dirnames, filenames in os.walk(ROOT):
         r = rel(dirpath)
         dirnames[:] = [d for d in dirnames if not d.startswith((".", "~")) and not (r == "." and d in ("_hub", "Inbox"))]
@@ -705,8 +717,8 @@ def scan_library():
             except OSError:
                 continue
             p = rel(full)
-            items.append({"path": p, "name": fn, "folder": os.path.dirname(p), "cat": category_of(p),
-                          "media": media_of(p), "export": is_export(p), "project": project_of_path(p),
+            items.append({"path": p, "name": fn, "folder": os.path.dirname(p), "cat": category_of(p, marks),
+                          "media": media_of(p), "export": is_export(p, marks), "project": project_of_path(p),
                           "size": st_.st_size, "mtime": st_.st_mtime})
     sig = hashlib.md5(json.dumps([(i["path"], i["size"], int(i["mtime"])) for i in items]).encode()).hexdigest()
     with LIB_LOCK:
@@ -714,6 +726,43 @@ def scan_library():
             LIB["items"], LIB["sig"] = items, sig
             LIB["gen"] += 1
     return items
+
+
+RENDER_WATCH = {"known": None, "pending": {}}
+NOT_RENDER_DIRS = ("linked", "requests", "inbox")
+
+
+def detect_renders(items):
+    """A new media file that appears in a project while an app is open on this PC, freshly written
+    (not copied, not uploaded through RotLab), is almost certainly a render: count it as an export."""
+    paths = {i["path"]: i for i in items}
+    if RENDER_WATCH["known"] is None:
+        RENDER_WATCH["known"] = set(paths)
+        return
+    app = (STATE.get("vegas") or {}).get("app") or os.environ.get("HUB_FAKE_APP")
+    new = [p for p in paths if p not in RENDER_WATCH["known"]]
+    RENDER_WATCH["known"] = set(paths)
+    pend = RENDER_WATCH["pending"]
+    for p in new:
+        it = paths[p]
+        low = p.lower().split("/")
+        if (app and it["media"] in ("Video", "Audio", "Images") and not it["export"] and it["project"] != SHARED
+                and p not in RECENT_WRITES and not any(d in NOT_RENDER_DIRS for d in low[:-1])
+                and now() - it["mtime"] < 180):
+            pend[p] = {"size": it["size"], "app": app, "seen": now()}
+    for p in list(pend):
+        it = paths.get(p)
+        if not it or now() - pend[p]["seen"] > 3600:
+            pend.pop(p, None)
+            continue
+        if it["size"] == pend[p]["size"] and now() - it["mtime"] > 8:  # finished writing
+            if p not in ws_state()["exports"]:
+                ws_add("export_mark", file=p, value=True, auto=True, app=pend[p]["app"])
+                with LIB_LOCK:
+                    LIB["sig"] = None
+            pend.pop(p, None)
+        else:
+            pend[p]["size"] = it["size"]
 
 
 def added_by_index():
@@ -1339,6 +1388,7 @@ def ws_state():
             return WS_CACHE["state"]
     evs = ws_events()
     projects, parts, reqs, comments, links = {}, {}, {}, {}, {}
+    exports = {}
     moves = {}
     for e in read_jsonl_dir(NOTES_DIR):
         if e.get("kind") == "move" and e.get("from") and e.get("to"):
@@ -1416,6 +1466,9 @@ def ws_state():
             links[e["lid"]] = {"lid": e["lid"], "pid": e["pid"], "src": e.get("src"), "cat": e.get("cat", "Any"),
                                "file": e.get("file"), "target": e.get("target"), "version": e.get("version"),
                                "vmtime": e.get("vmtime"), "by": u, "ts": ts, "deleted": False, "pinned": False}
+        elif k == "export_mark" and e.get("file"):
+            exports[follow(e["file"])] = {"value": bool(e.get("value", True)), "user": u, "ts": ts,
+                                          "auto": bool(e.get("auto")), "app": e.get("app")}
         elif k == "link_set" and e.get("lid") in links:
             for f in ("version", "vmtime", "deleted", "pinned"):
                 if f in e:
@@ -1427,7 +1480,8 @@ def ws_state():
         r["num"] = seq[r["pid"]]
     state = {"projects": projects, "parts": {k: v for k, v in parts.items() if not v["deleted"]},
              "requests": reqs, "comments": comments,
-             "links": {k: v for k, v in links.items() if not v["deleted"]}, "events": evs[-400:]}
+             "links": {k: v for k, v in links.items() if not v["deleted"]}, "events": evs[-400:],
+             "exports": exports}
     with WS_LOCK:
         WS_CACHE["sig"], WS_CACHE["state"] = sig, state
     return state
@@ -1686,7 +1740,9 @@ def ws_view():
         d["waiting"] = bool(AUTOLINK_WAIT.get(l["lid"]))
         links.append(d)
     comments = sorted(st_["comments"].values(), key=lambda c: c["ts"])
+    exports = [dict(v, file=k) for k, v in st_["exports"].items() if v.get("auto") and now() - v["ts"] < 86400]
     return {"projects": projects, "parts": parts, "requests": reqs, "links": links, "comments": comments,
+            "auto_exports": exports,
             "events": st_["events"][-300:], "types": {k: {"label": v["label"], "stages": v["stages"], "apps": v["apps"]}
                                                        for k, v in TYPES.items()}, "req_types": REQ_TYPES}
 
@@ -1790,6 +1846,13 @@ def ws_post(path, body):
         return 200, {"ok": True}
     if path == "/api/ws/link_del":
         ws_add("link_set", lid=b.get("lid"), deleted=True)
+        return 200, {"ok": True}
+    if path == "/api/ws/export_mark":
+        f = b.get("file", "")
+        safe_path(f)
+        ws_add("export_mark", file=f, value=bool(b.get("value", True)))
+        with LIB_LOCK:
+            LIB["sig"] = None
         return 200, {"ok": True}
     if path == "/api/ws/outputs":
         return 200, {"items": outputs_of(b.get("pid"), b.get("cat") or "Any")[:50]}
@@ -1967,7 +2030,7 @@ def monitor():
     while True:
         try:
             if tick % 2 == 0:
-                scan_library()
+                detect_renders(scan_library())
             vegas = detect_vegas() if tick % 2 == 0 else STATE["vegas"]
             with STATE_LOCK:
                 STATE["vegas"] = vegas
@@ -2025,6 +2088,46 @@ def folders_map(wsv):
     return out
 
 
+# ---------------------------------------------------------------- live layer (instant chat, typing, cursors)
+# The two windows talk through a free public MQTT relay. Everything sent is encrypted with a key that only
+# exists inside the synced workspace (_hub/live.key), and the topic name is derived from that key.
+LIVE_BROKERS = [b for b in os.environ.get("HUB_LIVE_BROKERS", "").split(",") if b] or [
+    "wss://broker.emqx.io:8084/mqtt", "wss://broker.hivemq.com:8884/mqtt", "wss://test.mosquitto.org:8081"]
+LIVE = {"key": None, "mtime": None}
+
+
+def live_key():
+    path = os.path.join(HUB_DIR, "live.key")
+    try:
+        # if both PCs made a key before they synced, Syncthing keeps both: everyone picks the smallest
+        cands = []
+        for fn in os.listdir(HUB_DIR):
+            if fn == "live.key" or (fn.startswith("live.") and fn.endswith(".key") and "conflict" in fn):
+                with open(os.path.join(HUB_DIR, fn), "r", encoding="utf-8") as f:
+                    v = f.read().strip()
+                if re.match(r"^[0-9a-f]{64}$", v):
+                    cands.append(v)
+        if cands:
+            return min(cands)
+    except OSError:
+        pass
+    key = os.urandom(32).hex()
+    try:
+        with open(path, "x", encoding="utf-8") as f:  # never overwrite one that appeared meanwhile
+            f.write(key)
+    except FileExistsError:
+        return live_key()
+    return key
+
+
+def live_info():
+    if not CONFIG.get("live", True):
+        return {"enabled": False}
+    if not LIVE["key"] or now() - (LIVE["mtime"] or 0) > 60:
+        LIVE["key"], LIVE["mtime"] = live_key(), now()
+    return {"enabled": True, "key": LIVE["key"], "brokers": LIVE_BROKERS}
+
+
 def build_state():
     log, chat = all_log(), all_chat()
     people = read_presence()
@@ -2058,7 +2161,8 @@ def build_state():
         "settings": {"auto_sort": CONFIG.get("auto_sort", True), "date_folders": CONFIG.get("date_folders", True),
                      "autostart": get_autostart(), "windows": os.name == "nt",
                      "native_window": has_native_window(), "folders": CONFIG.get("folders"),
-                     "github_updates": CONFIG.get("github_updates", True)},
+                     "github_updates": CONFIG.get("github_updates", True), "live": CONFIG.get("live", True)},
+        "live": live_info(),
         "github": {"latest": GH["latest"], "error": GH["error"], "checked": GH["checked"], "busy": GH["busy"]},
     }
 
@@ -2077,7 +2181,7 @@ def handle_post(path, body):
             return 400, {"error": "Please type your name"}
         first = not CONFIG.get("name")
         CONFIG["name"] = name
-        for k in ("auto_sort", "date_folders", "github_updates"):
+        for k in ("auto_sort", "date_folders", "github_updates", "live"):
             if k in body:
                 CONFIG[k] = bool(body[k])
         if "api_key" in body and body["api_key"] is not None:
