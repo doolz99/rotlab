@@ -722,30 +722,35 @@ function notify(){const evs=S.chat.concat(W.events.filter(e=>["req_new","req_sub
  lastSeenTs=Math.max(lastSeenTs||0,newest)}
 
 /* ---------------- find online ---------------- */
-const ON={kind:LS.get("on_kind","audio"),q:"",lic:LS.get("on_lic","any"),page:1,items:[],more:false,busy:false,err:"",total:0,res:"",added:{}};
-const ON_KINDS=[["audio","Sounds & music"],["images","Images"],["hdris","3D: HDRI skies"],["textures","3D: Textures"],["models","3D: Models"]];
+const ON={gif:"mp4",needKey:null,kind:LS.get("on_kind","audio"),q:"",lic:LS.get("on_lic","any"),page:1,items:[],more:false,busy:false,err:"",total:0,res:"",added:{}};
+const ON_KINDS=[["audio","Sounds & music"],["images","Images (Creative Commons)"],["pb_video","Videos (Pixabay)"],["pb_clipart","Clipart & illustrations (Pixabay)"],["pb_photo","Photos (Pixabay)"],["giphy","GIFs (GIPHY)"],["hdris","3D: HDRI skies"],["textures","3D: Textures"],["models","3D: Models"]];
+const ON_KEYS={pixabay:{name:"Pixabay",url:"https://pixabay.com/api/docs/",how:"Make a free account at pixabay.com, then open their API docs page while signed in. Your key is shown in the Parameters section (next to \"key\")."},
+ giphy:{name:"GIPHY",url:"https://developers.giphy.com/dashboard/",how:"Make a free account at developers.giphy.com, click Create an App, choose API, give it any name, and copy the API key it shows."}};
+const onSvc=k=>k.startsWith("pb_")?"pixabay":k==="giphy"?"giphy":null;
 function onlineShell(){const ph=["hdris","textures","models"].includes(ON.kind);
  $("view").innerHTML=`<div class="head"><h2>Find online</h2><span class="dim">free sounds, images and 3D assets · downloads go into <b>${esc(pname(pid))}</b></span></div>
  <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><select id="onKind" class="field" aria-label="What to search for">${ON_KINDS.map(([k,l])=>`<option value="${k}" ${k===ON.kind?"selected":""}>${l}</option>`).join("")}</select>
-  <input id="onQ" class="field" style="flex:1;min-width:160px" placeholder="${ph?"e.g. brick, sunset, chair":"e.g. whoosh, rain, crowd cheer"}" value="${esc(ON.q)}" aria-label="Search">
+  <input id="onQ" class="field" style="flex:1;min-width:160px" placeholder="${ph?"e.g. brick, sunset, chair":({pb_video:"e.g. city timelapse, ocean",pb_clipart:"e.g. arrow, explosion, cartoon cat",pb_photo:"e.g. skate park",giphy:"e.g. shocked, mind blown",images:"e.g. skate park, old tv"})[ON.kind]||"e.g. whoosh, rain, crowd cheer"}" value="${esc(ON.q)}" aria-label="Search">
   ${ph?`<select id="onRes" class="field" aria-label="Quality"><option value="">Normal quality</option><option value="1k" ${ON.res==="1k"?"selected":""}>1k (small)</option><option value="2k" ${ON.res==="2k"?"selected":""}>2k</option><option value="4k" ${ON.res==="4k"?"selected":""}>4k (big)</option></select>`
-   :`<select id="onLic" class="field" aria-label="Licence"><option value="any">Any free licence</option><option value="commercial" ${ON.lic==="commercial"?"selected":""}>OK for monetised videos</option><option value="free" ${ON.lic==="free"?"selected":""}>No credit needed</option></select>`}
+   :["audio","images"].includes(ON.kind)?`<select id="onLic" class="field" aria-label="Licence"><option value="any">Any free licence</option><option value="commercial" ${ON.lic==="commercial"?"selected":""}>OK for monetised videos</option><option value="free" ${ON.lic==="free"?"selected":""}>No credit needed</option></select>`
+   :ON.kind==="giphy"?`<select id="onGif" class="field" aria-label="Download as"><option value="mp4">Download as MP4 (best for VEGAS)</option><option value="gif" ${ON.gif==="gif"?"selected":""}>Download as GIF</option></select>`:""}
   <button class="btn b" id="onGo">Search</button></div>
  <div class="in scroll" id="onRes_" style="padding:6px"></div>
- <div class="dim" style="font-size:11.5px">${ph?'3D assets: Poly Haven, CC0 (free for anything). Powered by <a href="https://polyhaven.com" target="_blank" rel="noopener">Poly Haven</a>.':'From <a href="https://openverse.org" target="_blank" rel="noopener">Openverse</a> (Creative Commons). Always check the licence on the item\'s page; RotLab keeps the credit with every download.'}</div>`;$("view")._h="";
+ <div class="dim" style="font-size:11.5px"><span id="onKeyLine"></span> ${ON.kind==="giphy"?'<b>Powered by GIPHY.</b> Most GIFs are clips of films, shows and memes owned by someone else: fine for fun and private edits, risky in monetised or public videos.':ON.kind.startsWith("pb_")?'From <a href="https://pixabay.com" target="_blank" rel="noopener">Pixabay</a>: free to use, also commercially, no credit needed (credit is still saved).':ph?'3D assets: Poly Haven, CC0 (free for anything). Powered by <a href="https://polyhaven.com" target="_blank" rel="noopener">Poly Haven</a>.':'From <a href="https://openverse.org" target="_blank" rel="noopener">Openverse</a> (Creative Commons). Always check the licence on the item\'s page; RotLab keeps the credit with every download.'}</div>`;$("view")._h="";
  const go=()=>{ON.q=$("onQ").value.trim();ON.page=1;ON.items=[];onlineSearch()};
  $("onGo").onclick=go;$("onQ").onkeydown=e=>{if(e.key==="Enter")go()};
  $("onKind").onchange=()=>{ON.kind=$("onKind").value;LS.set("on_kind",ON.kind);ON.items=[];ON.err="";onlineShell();if(ON.q)go()};
  if($("onLic"))$("onLic").onchange=()=>{ON.lic=$("onLic").value;LS.set("on_lic",ON.lic);if(ON.q)go()};
- if($("onRes"))$("onRes").onchange=()=>{ON.res=$("onRes").value};
+ if($("onRes"))$("onRes").onchange=()=>{ON.res=$("onRes").value};if($("onGif"))$("onGif").onchange=()=>{ON.gif=$("onGif").value};
+ const svc=onSvc(ON.kind);if(svc)$("onKeyLine").innerHTML=S.online_keys&&S.online_keys[svc]?`Using your ${ON_KEYS[svc].name} key · <a id="onChKey">Change key</a>`:"";if($("onChKey"))$("onChKey").onclick=()=>{ON.needKey=svc;renderOnline()};if(svc&&S.online_keys&&!S.online_keys[svc])ON.needKey=svc;
  renderOnline();$("onQ").focus()}
 async function onlineSearch(){if(!ON.q&&!["hdris","textures","models"].includes(ON.kind)){ON.err="Type what you're looking for.";return renderOnline()}
  ON.busy=true;ON.err="";renderOnline();
- try{const r=await api("/api/online/search",{kind:ON.kind,q:ON.q,page:ON.page,lic:ON.lic});ON.items=ON.page===1?r.items:ON.items.concat(r.items);ON.more=r.more;ON.total=r.total}catch(e){ON.err=e.message}
+ try{const r=await api("/api/online/search",{kind:ON.kind,q:ON.q,page:ON.page,lic:ON.lic});ON.needKey=r.need_key||null;ON.items=ON.page===1?r.items:ON.items.concat(r.items);ON.more=r.more;ON.total=r.total}catch(e){ON.err=e.message}
  ON.busy=false;renderOnline()}
 function onlineCard(it,i){const jid=ON.added[it.source+it.id],job=jid&&(S.downloads||[]).find(d=>d.id===jid);
  const lc=it.plain.commercial&&it.plain.edit?(it.plain.credit?"#e8d27a":"#9fe0b0"):"#ffb27a";
- const media=it.kind==="audio"?`<div class="thumb" style="width:100%;height:auto;padding:6px;display:block"><audio controls preload="none" src="${esc(it.preview)}" style="width:100%;height:30px"></audio></div>`
+ const media=it.kind==="video"?`<div style="height:120px;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden"><video src="${esc(it.preview)}" poster="${esc(it.thumb)}" preload="none" muted loop playsinline style="max-width:100%;max-height:120px" onmouseenter="this.play().catch(()=>{})" onmouseleave="this.pause()"></video></div>`:it.kind==="audio"?`<div class="thumb" style="width:100%;height:auto;padding:6px;display:block"><audio controls preload="none" src="${esc(it.preview)}" style="width:100%;height:30px"></audio></div>`
   :`<div style="height:120px;background:#0e1118;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="${esc(it.thumb)}" alt="" loading="lazy" style="max-width:100%;max-height:120px" onerror="this.style.display='none'"></div>`;
  let btn;if(job&&job.state==="downloading")btn=`<span class="dim" style="font-size:12px">Downloading${job.total?" "+Math.floor(job.got/job.total*100)+"%":"..."}</span>`;
  else if(job&&job.state==="done")btn=`<a data-go="${esc(job.file)}">Added ✓ show</a>`;else if(job&&job.state==="error")btn=`<span style="color:#ffb4b4;font-size:12px">${esc(job.error)}</span> <button class="btn sm" data-add="${i}">Retry</button>`;
@@ -754,17 +759,22 @@ function onlineCard(it,i){const jid=ON.added[it.source+it.id],job=jid&&(S.downlo
   <span class="dim" style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${it.creator?"by "+esc(it.creator)+" · ":""}${esc(it.provider)}${it.duration?" · "+dur(it.duration):""}</span>
   <span style="font-size:11.5px;color:${lc}">${esc(it.plain.label)}</span>
   <span style="display:flex;gap:8px;align-items:center;justify-content:space-between">${btn}${it.page?`<a href="${esc(it.page)}" target="_blank" rel="noopener" style="font-size:12px">page</a>`:""}</span></div>`}
+function keyBox(svc){const k=ON_KEYS[svc];return `<div class="empty" style="color:var(--text);max-width:560px"><b>${k.name} needs a free key (once).</b><br><span class="dim">${esc(k.how)} The key is saved in the shared folder, so it works on both PCs.</span>
+ <div style="display:flex;gap:6px;margin-top:8px"><a href="${k.url}" target="_blank" rel="noopener" class="btn sm" style="text-decoration:none;color:var(--text);display:inline-flex;align-items:center">Open ${k.name}</a><input id="onKeyIn" class="field" style="flex:1" placeholder="paste the key here" aria-label="${k.name} key"><button class="btn sm b" id="onKeySave" data-svc="${svc}">Save</button></div></div>`}
 function renderOnline(){const box=$("onRes_");if(!box)return;let h="";
- if(ON.err)h=`<div class="empty" style="color:#ffb4b4">${esc(ON.err)}</div>`;
+ if(ON.needKey&&onSvc(ON.kind)===ON.needKey)h=keyBox(ON.needKey);
+ else if(ON.err)h=`<div class="empty" style="color:#ffb4b4">${esc(ON.err)}</div>`;
  else if(!ON.items.length&&ON.busy)h='<div class="empty">Searching...</div>';
- else if(!ON.items.length)h=`<div class="empty">${ON.q?"Nothing found. Try other words.":"Search for free "+({audio:"sound effects and music",images:"photos and pictures",hdris:"HDRI skies for lighting in Blender",textures:"textures (wood, brick, ground...)",models:"3D models"})[ON.kind]+". Leave it empty for 3D to see the most popular."}</div>`;
+ else if(!ON.items.length)h=`<div class="empty">${ON.q?"Nothing found. Try other words.":"Search for free "+({audio:"sound effects and music",images:"photos and pictures",pb_video:"stock video clips",pb_clipart:"clipart and illustrations",pb_photo:"stock photos",giphy:"GIFs",hdris:"HDRI skies for lighting in Blender",textures:"textures (wood, brick, ground...)",models:"3D models"})[ON.kind]+". Leave it empty for 3D to see the most popular."}</div>`;
  else h=`<div class="dim" style="font-size:12px;margin-bottom:6px">${ON.total} found</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px">${ON.items.map(onlineCard).join("")}</div>${ON.more?`<div style="padding:8px 0"><button class="btn" id="onMore" ${ON.busy?"disabled":""}>${ON.busy?"Loading...":"More"}</button></div>`:""}`;
  if(box._h===h)return;const st=box.scrollTop;box.innerHTML=h;box._h=h;box.scrollTop=st;
  box.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>onlineAdd(ON.items[+b.dataset.add]));
+ if($("onKeySave"))$("onKeySave").onclick=async()=>{const v=$("onKeyIn").value.trim();if(!v)return;try{await api("/api/online/key",{name:$("onKeySave").dataset.svc,value:v});ON.needKey=null;await tick();toast("Key saved");if(ON.q||!onSvc(ON.kind))onlineSearch();else renderOnline()}catch(e){toast(e.message)}};
  box.querySelectorAll("[data-go]").forEach(a=>a.onclick=()=>gotoFile(a.dataset.go));
  if($("onMore"))$("onMore").onclick=()=>{ON.page++;onlineSearch()}}
 async function onlineAdd(it){const pl=it.plain;
- if(!pl.edit&&!confirm("This licence says no edits are allowed, so you can't cut or change it in a video. Download anyway?"))return;
+ if(pl.risky){if(!confirm("GIFs on GIPHY are usually clips owned by someone else (films, shows, memes). Using them in a monetised or public video can get a copyright claim. Download anyway?"))return;it=Object.assign({},it,{as_gif:ON.gif==="gif"})}
+ else if(!pl.edit&&!confirm("This licence says no edits are allowed, so you can't cut or change it in a video. Download anyway?"))return;
  if(!pl.commercial&&!confirm("This licence doesn't allow commercial use, so it's not for monetised videos. Download anyway?"))return;
  try{const r=await api("/api/online/add",{item:it,pid,res:ON.res||null});ON.added[it.source+it.id]=r.job;await tick();renderOnline()}catch(e){toast(e.message)}}
 let dlSeen={};

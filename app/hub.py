@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "3.3"
+HUB_VERSION = "3.4"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -1861,6 +1861,9 @@ def ws_post(path, body):
         return 200, {"ok": True}
     if path == "/api/online/search":
         return 200, online_search(b.get("kind"), b.get("q"), b.get("page"), b.get("lic") or "any")
+    if path == "/api/online/key":
+        set_online_key(b.get("name"), b.get("value"))
+        return 200, {"ok": True}
     if path == "/api/online/add":
         it = b.get("item") or {}
         return 200, {"ok": True, "job": online_add(it, b.get("pid") or current_project(), b.get("res"))}
@@ -1875,12 +1878,43 @@ def ws_post(path, body):
 OPENVERSE = os.environ.get("HUB_OPENVERSE", "https://api.openverse.org/v1")
 POLYHAVEN = os.environ.get("HUB_POLYHAVEN", "https://api.polyhaven.com")
 WEB_UA = "RotLab/%s (+https://github.com/doolz99/rotlab)" % HUB_VERSION
+PIXABAY = os.environ.get("HUB_PIXABAY", "https://pixabay.com/api")
+GIPHY = os.environ.get("HUB_GIPHY", "https://api.giphy.com/v1")
+WEB_CACHE = {}  # url -> (ts, data); Pixabay asks for results to be cached for 24 hours
 DOWNLOADS = {}  # job id -> {title, state, got, total, file, error, ts}
+
+
+def keys_file():
+    return os.path.join(HUB_DIR, "online_keys.json")  # synced, so a key pasted on one PC works on both
+
+
+def online_keys():
+    k = read_json(keys_file()) or {}
+    return {"pixabay": (k.get("pixabay") or "").strip(), "giphy": (k.get("giphy") or "").strip()}
+
+
+def set_online_key(name, value):
+    if name not in ("pixabay", "giphy"):
+        raise ValueError("unknown service")
+    k = read_json(keys_file()) or {}
+    k[name] = re.sub(r"[^A-Za-z0-9_-]", "", value or "")[:80]
+    write_json_atomic(keys_file(), k)
 PH_CACHE = {}   # type -> (ts, assets)
 MAX_DOWNLOAD = 2 * 1024 ** 3
 
 
-def web_json(url, timeout=20):
+def web_json(url, timeout=20, cache=0):
+    if cache and url in WEB_CACHE and now() - WEB_CACHE[url][0] < cache:
+        return WEB_CACHE[url][1]
+    data = _web_json(url, timeout)
+    if cache:
+        WEB_CACHE[url] = (now(), data)
+        for k in [k for k, v in WEB_CACHE.items() if now() - v[0] > cache]:
+            WEB_CACHE.pop(k, None)
+    return data
+
+
+def _web_json(url, timeout=20):
     req = urllib.request.Request(url, headers={"User-Agent": WEB_UA, "Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -1888,6 +1922,8 @@ def web_json(url, timeout=20):
     except urllib.error.HTTPError as e:
         if e.code == 429:
             raise ValueError("The search site says we're searching too fast. Wait a minute and try again.")
+        if e.code in (400, 401, 403) and ("pixabay" in url or "giphy" in url):
+            raise ValueError("The search site didn't accept the key. Check it in Find online (Change key).")
         raise ValueError("The search site answered with an error (%s)." % e.code)
     except (urllib.error.URLError, socket.timeout, OSError):
         raise ValueError("Can't reach the search site. Is the internet on?")
@@ -1961,6 +1997,62 @@ def online_search(kind, q, page=1, lic="any"):
                 "thumb": a.get("thumbnail_url") or "https://cdn.polyhaven.com/asset_img/thumbs/%s.png?width=256&height=256" % aid,
                 "preview": "", "download": "", "ext": "", "duration": None, "provider": "Poly Haven"} for _, aid, a in chunk]
         return {"items": out, "more": page * per < len(hits), "total": len(hits)}
+    if kind in ("pb_video", "pb_clipart", "pb_photo"):
+        key = online_keys()["pixabay"]
+        if not key:
+            return {"items": [], "more": False, "total": 0, "need_key": "pixabay"}
+        params = {"key": key, "q": q[:100], "page": page, "per_page": 24, "safesearch": "true"}
+        if kind == "pb_clipart":
+            params["image_type"] = "illustration"
+        elif kind == "pb_photo":
+            params["image_type"] = "photo"
+        url = "%s/%s?%s" % (PIXABAY, "videos/" if kind == "pb_video" else "",
+                            "&".join("%s=%s" % (k, quote(str(v))) for k, v in params.items()))
+        data = web_json(url, cache=86400)
+        out = []
+        pb = {"label": "Free to use (Pixabay licence)", "credit": False, "commercial": True, "edit": True}
+        for h in data.get("hits", []):
+            title = ", ".join([t.strip() for t in (h.get("tags") or "").split(",")][:3]) or "pixabay %s" % h.get("id")
+            if kind == "pb_video":
+                v = h.get("videos") or {}
+                best = v.get("large") if (v.get("large") or {}).get("url") else (v.get("medium") or v.get("small") or {})
+                thumb = (v.get("medium") or {}).get("thumbnail") or (v.get("tiny") or {}).get("thumbnail") or ""
+                out.append({"source": "pixabay", "kind": "video", "id": str(h.get("id")), "title": title, "creator": h.get("user") or "",
+                            "license": "pixabay", "license_url": "https://pixabay.com/service/license-summary/", "plain": pb,
+                            "attribution": "Video by %s from Pixabay" % (h.get("user") or "Pixabay"), "page": h.get("pageURL") or "",
+                            "thumb": thumb, "preview": (v.get("tiny") or v.get("small") or {}).get("url") or "",
+                            "download": best.get("url") or "", "ext": "mp4", "duration": h.get("duration"),
+                            "provider": "Pixabay", "width": best.get("width"), "height": best.get("height")})
+            else:
+                out.append({"source": "pixabay", "kind": "image", "id": str(h.get("id")), "title": title, "creator": h.get("user") or "",
+                            "license": "pixabay", "license_url": "https://pixabay.com/service/license-summary/", "plain": pb,
+                            "attribution": "Image by %s from Pixabay" % (h.get("user") or "Pixabay"), "page": h.get("pageURL") or "",
+                            "thumb": h.get("webformatURL") or h.get("previewURL") or "", "preview": "",
+                            "download": h.get("largeImageURL") or h.get("webformatURL") or "",
+                            "ext": (os.path.splitext(urlparse(h.get("largeImageURL") or "").path)[1].lstrip(".") or "jpg").lower(),
+                            "duration": None, "provider": "Pixabay", "width": h.get("imageWidth"), "height": h.get("imageHeight")})
+        return {"items": out, "more": page * 24 < min(int(data.get("totalHits") or 0), 500), "total": data.get("totalHits") or 0}
+    if kind == "giphy":
+        key = online_keys()["giphy"]
+        if not key:
+            return {"items": [], "more": False, "total": 0, "need_key": "giphy"}
+        per = 24
+        url = "%s/gifs/search?api_key=%s&q=%s&limit=%d&offset=%d&rating=pg-13" % (GIPHY, quote(key), quote(q[:50]), per, (page - 1) * per)
+        data = web_json(url)
+        gp = {"label": "Copyright unclear, not for monetised videos", "credit": True, "commercial": False, "edit": True, "risky": True}
+        out = []
+        for g in data.get("data", []):
+            im = g.get("images") or {}
+            orig = im.get("original") or {}
+            prev = im.get("fixed_height") or im.get("downsized") or orig
+            out.append({"source": "giphy", "kind": "gif", "id": g.get("id"), "title": (g.get("title") or "GIF").strip(),
+                        "creator": g.get("username") or "", "license": "giphy", "license_url": "https://giphy.com/terms",
+                        "plain": gp, "attribution": "GIF %s via GIPHY%s" % (g.get("title") or "", (" (@%s)" % g["username"]) if g.get("username") else ""),
+                        "page": g.get("url") or "", "thumb": prev.get("url") or "", "preview": "",
+                        "download": orig.get("mp4") or orig.get("url") or "", "download_gif": orig.get("url") or "",
+                        "ext": "mp4" if orig.get("mp4") else "gif", "duration": None, "provider": "GIPHY"})
+        pg = data.get("pagination") or {}
+        return {"items": out, "more": (pg.get("offset", 0) + pg.get("count", 0)) < min(int(pg.get("total_count") or 0), 499), "total": pg.get("total_count") or 0}
     raise ValueError("unknown kind")
 
 
@@ -2006,6 +2098,17 @@ def online_add_run(jid, item, pid, res):
             sub = "Sounds" if kind == "audio" else "Images"
             ext = re.sub(r"[^a-z0-9]", "", (item.get("ext") or "").lower())[:5] or ("mp3" if kind == "audio" else "jpg")
             url = item.get("download") or ""
+            if not url.startswith(("http://", "https://")):
+                raise ValueError("no download link")
+            dest = unique_path(os.path.join(base, "Downloads", sub), _safe_name(item.get("title")) + "." + ext)
+            _fetch_to(url, dest, job)
+            main = dest
+        elif item.get("source") in ("pixabay", "giphy"):
+            sub = {"video": "Videos", "image": "Images", "gif": "GIFs"}.get(kind, "Files")
+            if kind == "gif" and item.get("as_gif") and item.get("download_gif"):
+                url, ext = item["download_gif"], "gif"
+            else:
+                url, ext = item.get("download") or "", re.sub(r"[^a-z0-9]", "", (item.get("ext") or "").lower())[:5] or "mp4"
             if not url.startswith(("http://", "https://")):
                 raise ValueError("no download link")
             dest = unique_path(os.path.join(base, "Downloads", sub), _safe_name(item.get("title")) + "." + ext)
@@ -2363,7 +2466,7 @@ def build_state():
         "ui": ui_hash(), "update": dict(UPDATE), "people": people, "my_vegas": s["vegas"], "clash": clash,
         "chat": chat[-300:], "log": log[-300:], "unread": {"chat": unread_chat, "log": unread_log, "requests": mine_reqs},
         "ws": wsv, "project": current_project(), "shared": SHARED, "folders": folders_map(wsv),
-        "read": rd, "lib_gen": LIB["gen"], "inbox": inbox_files_count(), "upload": up, "downloads": sorted(DOWNLOADS.values(), key=lambda d: d["ts"]),
+        "read": rd, "lib_gen": LIB["gen"], "inbox": inbox_files_count(), "upload": up, "online_keys": {k: bool(v) for k, v in online_keys().items()}, "downloads": sorted(DOWNLOADS.values(), key=lambda d: d["ts"]),
         "syncthing": s["syncthing"], "sync": dict(SYNC), "phone": phone_state(),
         "settings": {"auto_sort": CONFIG.get("auto_sort", True), "date_folders": CONFIG.get("date_folders", True),
                      "autostart": get_autostart(), "windows": os.name == "nt",
