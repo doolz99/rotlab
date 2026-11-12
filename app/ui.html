@@ -288,13 +288,17 @@ function settingsDlg(first){const st=S?S.settings:{};
    <label class="ck"><input type="checkbox" id="sSort" ${st.auto_sort!==false?"checked":""}> Sort files dropped in the Inbox folder automatically (into the project you have open)</label>
    <label class="ck"><input type="checkbox" id="sDate" ${st.date_folders!==false?"checked":""}> Put video and photos in a folder per day</label></fieldset>
   ${st.windows?`<label class="ck"><input type="checkbox" id="sStart" ${st.autostart?"checked":""}> Start RotLab with Windows</label>`:""}
+  <fieldset><legend>Storage on this PC</legend>
+   <label class="ck"><input type="radio" name="sStore" value="all" ${st.storage!=="ondemand"?"checked":""}> Download everything (simplest)</label>
+   <label class="ck"><input type="radio" name="sStore" value="ondemand" ${st.storage==="ondemand"?"checked":""}> Only what I use: big videos, audio and images stay on the other PC until I Get them (previews always show)</label>
+   <div class="dim" style="font-size:12px">You can change this per project at the top of Files.</div></fieldset>
   <label class="ck"><input type="checkbox" id="sLive" ${st.live!==false?"checked":""}> Live: instant chat, "is typing" and seeing each other's mouse (sent encrypted through a free public relay)</label>
   <label class="ck"><input type="checkbox" id="sGh" ${st.github_updates!==false?"checked":""}> Get new versions from GitHub automatically</label>
   <details><summary class="dim">Advanced</summary><div style="margin-top:6px"><label for="sKey">Syncthing API key (only if RotLab can't find your own Syncthing):</label><input id="sKey" class="field" style="width:100%"></div></details>
   <div class="dim" style="font-size:12px">Workspace folder: ${esc(S?S.root:"")}</div>
   <div class="btns"><button class="btn" id="sOk">OK</button>${first?"":'<button class="btn" id="sCancel">Cancel</button>'}</div>`,{locked:first});
- $("sOk").onclick=async()=>{const b={name:$("sName").value,auto_sort:$("sSort").checked,date_folders:$("sDate").checked,github_updates:$("sGh").checked,live:$("sLive").checked};if($("sStart"))b.autostart=$("sStart").checked;if($("sKey").value.trim())b.api_key=$("sKey").value.trim();
-  try{await api("/api/setup",b);closeDlg();tick()}catch(e){toast(e.message)}};
+ $("sOk").onclick=async()=>{const b={name:$("sName").value,auto_sort:$("sSort").checked,date_folders:$("sDate").checked,github_updates:$("sGh").checked,live:$("sLive").checked};const sm=document.querySelector('input[name=sStore]:checked');if($("sStart"))b.autostart=$("sStart").checked;if($("sKey").value.trim())b.api_key=$("sKey").value.trim();
+  try{await api("/api/setup",b);if(sm&&S&&S.settings&&sm.value!==S.settings.storage)await api("/api/storage/set",{mode:sm.value});closeDlg();tick()}catch(e){toast(e.message)}};
  if($("sCancel"))$("sCancel").onclick=closeDlg;$("sName").onkeydown=e=>{if(e.key==="Enter")$("sOk").click()};
 }
 function aboutDlg(){openDlg("About RotLab",`<div style="display:flex;gap:14px;align-items:center"><svg width="40" height="40" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="5" width="14" height="10" fill="#c0c0c0" stroke="#000"/><rect x="1" y="2" width="14" height="3" fill="#fff" stroke="#000"/><path d="M6 8 L11 10 L6 12 Z" fill="#000"/></svg><div><b>RotLab</b><br>Version ${esc(S.version)}${S.github&&S.github.latest?" · newest on GitHub: "+esc(S.github.latest):""}<br><span class="dim">Projects, files, requests and sync for making things together.<br>Older versions of RotLab are kept on this PC when it updates.</span></div></div><div class="btns"><button class="btn" id="aChk">Check for updates</button><button class="btn" onclick="closeDlg()">OK</button></div>`);
@@ -390,6 +394,7 @@ function forYou(){const it=[];
  for(const l of W.links){if(l.waiting)it.push({k:"waiting",t:`New ${short(l.newest)} from ${pname(l.src)} goes into ${pname(l.pid)} when it's closed`,go:()=>{selectProject(l.pid);linksDlg()},pid:l.pid,ts:0});
   else if(l.pinned&&l.update)it.push({k:"new version",t:`${pname(l.src)} has a newer ${short(l.newest)} (you kept an older one)`,go:()=>{selectProject(l.pid);linkVersionsDlg(l.lid)},pid:l.pid,ts:0})}
  const ack=LS.get("expack",{});
+ const cack=LS.get("colack",{});for(const e of S.log)if(e.type==="collected"&&e.user===S.me&&!cack[e.id]&&Date.now()/1000-e.ts<3*86400)it.push({k:"copied in",t:`${short(e.file)} used ${e.count} outside file${e.count>1?"s":""}: copied to ${e.folder}. Next time VEGAS/FL asks where it is, point it there.`,go:()=>{cack[e.id]=1;LS.set("colack",cack);gotoFile(e.file)},pid:projOfPath(e.file),ts:e.ts});
  for(const x of (W.auto_exports||[]))if(x.value&&x.user===S.me&&!ack[x.file])it.push({k:"render",t:`${short(x.file)} counted as a new export of ${pname(projOfPath(x.file))}`,go:()=>{ack[x.file]=1;LS.set("expack",ack);gotoFile(x.file)},pid:projOfPath(x.file),ts:x.ts});
  if(S.inbox&&!S.settings.auto_sort)it.push({k:"inbox",t:`${S.inbox} file(s) waiting in the Inbox folder`,go:()=>act("sortinbox"),ts:0});
  return it.sort((a,b)=>b.ts-a.ts)}
@@ -538,11 +543,11 @@ function upOne(f,dest,batch,note,project,onp){return new Promise((res,rej)=>{con
  x.upload.onprogress=e=>{if(onp)onp(e.loaded)};x.onload=()=>{let j={};try{j=JSON.parse(x.responseText)}catch(e){}x.status===200?res(j.saved):rej(new Error(j.error||x.status))};x.onerror=()=>rej(new Error("connection lost"));x.send(f)})}
 
 /* ---------------- files (with comments) ---------------- */
-function filesShell(){$("view").innerHTML=`<div class="head"><h2>${esc(pname(pid))}</h2><span style="flex:1"></span><button class="btn sm" data-act="add">Add files...</button><button class="btn sm" data-act="openproj">Open folder</button><button class="btn sm" id="credBtn" title="Copy the credits for downloaded assets in this project">Copy credits</button><label for="find" class="dim">Find:</label><input id="find" class="field" style="width:190px" placeholder="name, tag or comment" value="${esc(q)}"></div>
+function filesShell(){$("view").innerHTML=`<div class="head"><h2>${esc(pname(pid))}</h2><span style="flex:1"></span><button class="btn sm" data-act="add">Add files...</button><button class="btn sm" data-act="openproj">Open folder</button><select id="storeSel" class="field" title="What this PC keeps for this project" aria-label="Storage on this PC"></select><button class="btn sm" id="storeAct" style="display:none"></button><button class="btn sm" id="credBtn" title="Copy the credits for downloaded assets in this project">Copy credits</button><label for="find" class="dim">Find:</label><input id="find" class="field" style="width:190px" placeholder="name, tag or comment" value="${esc(q)}"></div>
  <div style="flex:1;min-height:0;display:flex;gap:6px"><div class="cats in" id="cats"></div><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px"><div class="list in" id="list"></div><div class="detail in" id="detail" style="display:none"></div></div></div>`;$("view")._h="";
- $("credBtn").onclick=copyCredits;let ft=null;$("find").oninput=()=>{clearTimeout(ft);ft=setTimeout(()=>{q=$("find").value.trim();selPath=null;$("detail").style.display="none";loadLib(true)},250)}}
+ $("credBtn").onclick=copyCredits;renderStoreSel();let ft=null;$("find").oninput=()=>{clearTimeout(ft);ft=setTimeout(()=>{q=$("find").value.trim();selPath=null;$("detail").style.display="none";loadLib(true)},250)}}
 async function loadLib(force){const key=pid+"|"+cat+"|"+q;if(!force&&lib&&libGen===S.lib_gen&&libKey===key)return;
- try{const r=await api("/api/library",{cat,q,project:pid});if(area!=="files"||!$("list"))return;lib=r;libGen=r.gen;libKey=key;renderCats();renderList();if(selPath)selectFile(selPath,true)}catch(e){}}
+ try{const r=await api("/api/library",{cat,q,project:pid});if(area!=="files"||!$("list"))return;lib=r;libGen=r.gen;libKey=key;renderCats();renderList();renderStoreSel();if(selPath)selectFile(selPath,true)}catch(e){}}
 function renderCats(){const c=(lib&&lib.counts)||{},btn=k=>`<button class="cat ${!q&&cat===k?"on":""}" data-cat="${k}"><span>${k}</span><span class="n">${c[k]||0}</span></button>`;
  $("cats").innerHTML=["Video","Audio","Images","Graphics","Exports"].map(btn).join("")+'<div class="sep"></div>'+btn("Project")+(c.Other?btn("Other"):"");
  $("cats").querySelectorAll("[data-cat]").forEach(b=>b.onclick=()=>{cat=b.dataset.cat;q="";$("find").value="";selPath=null;$("detail").style.display="none";loadLib(true)})}
@@ -553,12 +558,13 @@ function renderList(){const items=lib.items;
  let h=`<table><thead><tr><th style="width:1%"></th><th>Name</th>${media?"<th>Length</th>":""}<th>Tags</th><th>Added by</th><th>Comments</th><th>Folder</th></tr></thead><tbody>`,last="";
  for(const it of items){const d=ymd(it.mtime);if(d!==last){h+=`<tr class="grp"><td colspan="7">${esc(dayName(it.mtime))}</td></tr>`;last=d}
   const lk=linkOfTarget(it.path),n=it.notes+cc(it.path);
-  h+=`<tr class="row ${selPath===it.path?"sel":""}" data-p="${esc(it.path)}" draggable="true"><td>${thumb(it)}</td><td class="nm" title="${esc(it.path)}">${esc(it.name)}</td>${media?`<td data-dur="${esc(it.path)}">${esc(durCache[it.path]||"")}</td>`:""}<td>${lk?`<span class="tag lk">from ${esc(pname(lk.src))}</span>`:""}${(it.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</td><td>${esc(it.by?who(it.by):"")}</td><td>${n?`<span class="bub">${n}</span>`:""}</td><td class="dim">${esc(it.folder.split("/").slice(1).join("/")||"(top)")}</td></tr>`}
+  h+=`<tr class="row ${selPath===it.path?"sel":""}" data-p="${esc(it.path)}" draggable="true"><td>${thumb(it)}</td><td class="nm" title="${esc(it.path)}"${it.remote?' style="color:#9aa4b8"':""}>${esc(it.name)}${it.remote?` <span class="dim" style="font-size:11px">${it.getting?"getting...":"not on this PC"}</span>`:""}</td>${media?`<td data-dur="${esc(it.path)}">${esc(durCache[it.path]||"")}</td>`:""}<td>${lk?`<span class="tag lk">from ${esc(pname(lk.src))}</span>`:""}${(it.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</td><td>${esc(it.by?who(it.by):"")}</td><td>${n?`<span class="bub">${n}</span>`:""}</td><td class="dim">${esc(it.folder.split("/").slice(1).join("/")||"(top)")}</td></tr>`}
  $("list").innerHTML=h+"</tbody></table>";
  $("list").querySelectorAll("tr.row").forEach(r=>{r.onclick=()=>selectFile(r.dataset.p);r.ondblclick=()=>api("/api/open",{path:r.dataset.p}).catch(e=>toast(e.message));
   r.ondragstart=e=>{e.dataTransfer.setData("text/rotlab-file",r.dataset.p);e.dataTransfer.effectAllowed="link"}});lazyThumbs()}
 function catOf(p){const e=(p.split(".").pop()||"").toLowerCase();if(["mp4","mov","m4v","mkv","avi","mts","m2ts","webm","3gp","wmv","mxf","mpg","mpeg"].includes(e))return"Video";if(["mp3","wav","m4a","aac","flac","ogg","wma","aif","aiff","opus"].includes(e))return"Audio";if(["jpg","jpeg","heic","heif","dng","raw","cr2","cr3","nef","arw","tif","tiff","bmp"].includes(e))return"Images";if(["png","gif","webp","svg","psd","ai","eps","ttf","otf"].includes(e))return"Graphics";return"Other"}
 function thumb(it){const src="/media?path="+encodeURIComponent(it.path),m=it.media||catOf(it.path);
+ if(it.remote)return `<div class="thumb" style="position:relative">${it.preview?`<img src="/preview?path=${encodeURIComponent(it.path)}" alt="" style="object-fit:cover;object-position:left">`:esc((it.name.split(".").pop()||"").toUpperCase().slice(0,5))}<span style="position:absolute;right:1px;bottom:0;font-size:11px;text-shadow:0 0 2px #000">${it.getting?"⇣":"☁"}</span></div>`;
  if(m==="Video")return `<div class="thumb" data-v="${esc(src)}" data-p="${esc(it.path)}">&#9654;</div>`;
  if(isImg(it.name))return `<div class="thumb" data-i="${esc(src)}"></div>`;
  if(m==="Audio")return `<div class="thumb" data-a="${esc(src)}" data-p="${esc(it.path)}">&#9835;</div>`;
@@ -581,18 +587,25 @@ async function selectFile(path,keep){selPath=path;document.querySelectorAll("#li
  else if(d.media==="Audio")pv=`<audio id="dMedia" data-p="${esc(path)}" src="${src}" controls preload="metadata"></audio>`;
  else if(img)pv=`<div style="position:relative;display:inline-block;max-height:100%" id="imgWrap"><img id="dImg" src="${src}" alt="" style="max-height:340px">${cs.filter(c=>c.x!=null).map((c,i)=>`<span class="pin" style="left:${c.x*100}%;top:${c.y*100}%;${c.resolved?"opacity:.4":""}" data-cid="${c.id}" title="${esc(c.text)}">${i+1}</span>`).join("")}</div>`;
  else pv=`<div class="dim" style="text-align:center;padding:20px">${d.app?esc(d.app)+" project":"No preview"}</div>`;
+ if(d.remote){const pm=d.preview;pv=pm&&pm.ok?`<div style="text-align:center"><img src="/preview?path=${encodeURIComponent(path)}" alt="" style="max-width:100%;max-height:220px">${pm.duration?`<div class="dim" style="font-size:12px">${dur(pm.duration)}${pm.kind==="Video"?" · preview frames":pm.kind==="Audio"?" · waveform":""}</div>`:""}</div>`:`<div class="dim" style="text-align:center;padding:20px">No preview yet</div>`}
  const all=d.notes.map(n=>({ts:n.ts,user:n.user,text:n.text,note:true,via:n.via})).concat(cs).sort((a,b)=>(a.t??1e9)-(b.t??1e9)||a.ts-b.ts);
  const lk=linkOfTarget(path),usedIn=W.links.filter(l=>l.file===path||(l.version===path));
  $("detail").innerHTML=`<div style="flex:1 1 380px;min-width:260px;display:flex;flex-direction:column;gap:4px;min-height:0"><div class="stage">${pv}</div>${timed?'<div class="marks" id="marks"></div>':""}</div>
   <div class="dside"><div><b>${esc(d.name)}</b> <span class="dim">· ${size(d.size)}${d.by?" · added by "+esc(who(d.by)):""}</span>
    ${lk?`<div style="font-size:12px;color:#9db8ff">Linked from ${esc(pname(lk.src))} · ${esc(linkLabel(lk))} <a data-lver="${lk.lid}">versions</a></div>`:""}${(W.credits||{})[path]?`<div style="font-size:12px;color:#d8cfa6">${esc(W.credits[path].attribution)}${W.credits[path].page?` · <a href="${esc(W.credits[path].page)}" target="_blank" rel="noopener">page</a>`:""}</div>`:""}${usedIn.length?`<div class="dim" style="font-size:12px">Used in ${usedIn.map(l=>esc(pname(l.pid))).join(", ")}</div>`:""}
    ${["Video","Audio","Images","Graphics"].includes(d.media)&&!lk?`<div class="dim" style="font-size:12px">${d.cat==="Exports"?`Export of ${esc(pname(projOfPath(path)))}${(W.auto_exports||[]).some(x=>x.file===path&&x.value)?" (spotted as a render"+(((W.auto_exports||[]).find(x=>x.file===path)||{}).app?" from "+esc((W.auto_exports||[]).find(x=>x.file===path).app):"")+")":""} · <a data-exp="0">not an export</a>`:`<a data-exp="1">mark as an export</a> <span class="dim">(finished versions other projects can link to)</span>`}</div>`:""}</div>
+   ${d.remote?`<div class="banner info" style="margin:0;padding:5px 8px;font-size:12px">${d.remote.getting?(d.remote.online.length?"Getting it from "+esc(d.remote.online.join(", "))+"...":"Waiting for "+esc(d.remote.holders.join(" or "))+"'s PC to come online"):"Not on this PC · "+size(d.size)+" · on "+esc(d.remote.holders.join(", "))+"'s PC"+(d.remote.online.length?"":" (offline)")} ${d.remote.getting?"":`<button class="btn sm b" id="dGet">Get it</button>`}</div>`:""}
+   <div id="dDeps"></div>
    <div style="display:flex;gap:5px;flex-wrap:wrap"><button class="btn sm" id="dOpen">${d.app?"Open in "+esc(d.app):"Open"}</button>${d.app?`<button class="btn sm" id="dHist">History (${d.history_count})</button>`:""}<button class="btn sm" id="dShow">Show in folder</button><button class="btn sm" id="dUse">Use in...</button><button class="btn sm" id="dReq">Request...</button></div>
    <div class="chips" id="dTags">${TAGS.concat(d.tags.filter(t=>!TAGS.includes(t))).map(t=>`<button class="chip ${d.tags.includes(t)?"on":""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}<button class="chip" id="dTagAdd">+ tag</button></div>
    <div class="cmts out">${all.length?all.map(c=>`<div class="cmt ${c.resolved?"res":""}"><span class="dim" style="min-width:34px;font-size:12px">${c.t!=null?`<a data-seek="${c.t}">${dur(c.t)}</a>`:c.x!=null?"#"+(cs.filter(z=>z.x!=null).indexOf(c)+1):""}</span><span style="flex:1"><b>${esc(who(c.user))}</b>: ${esc(c.text)} <span class="dim" style="font-size:11px">${esc(ago(c.ts))}${c.via==="upload"?" · upload note":""}</span></span>${c.note?"":`<button class="btn sm" data-mkreq="${c.id}" title="Make a request from this">→ req</button><button class="btn sm" data-resolve="${c.id}" data-v="${c.resolved?0:1}">${c.resolved?"Undo":"Done"}</button>`}</div>`).join(""):`<div class="dim" style="font-size:12px">No comments yet.${timed?" Pause anywhere and comment to mark that moment.":img?" Click the picture to pin a comment to a spot.":""}</div>`}</div>
    <div style="display:flex;gap:6px;align-items:center"><label for="dNote" class="dim" id="dAt" style="font-size:12px;white-space:nowrap">Comment:</label><input id="dNote" data-p="${esc(path)}" class="field" style="flex:1;min-width:0"><button class="btn" id="dNoteBtn">Add</button></div></div>`;
  $("detail").style.display="flex";$("dNote").value=prev;
- $("dOpen").onclick=()=>api("/api/open",{path}).catch(e=>toast(e.message));$("dShow").onclick=()=>api("/api/reveal",{path}).catch(e=>toast(e.message));
+ $("dOpen").onclick=async()=>{if(d.remote)return toast("Get it first");try{if(d.app){const r=await api("/api/open_project",{path});if(r.waiting)toast("Getting "+r.waiting+" file"+(r.waiting>1?"s":"")+" it uses ("+size(r.bytes||0)+"), opening when they're here")}else await api("/api/open",{path})}catch(e){toast(e.message)}};
+ if($("dGet"))$("dGet").onclick=async()=>{await api("/api/storage/get",{paths:[path]});selSig="";await tick();selectFile(path,true)};
+ if(d.freeable&&d.ondemand!==undefined){const fb=document.createElement("button");fb.className="btn sm";fb.textContent="Free up space";fb.title="Remove this PC's copy (another PC keeps it)";fb.onclick=()=>freeFiles([path]);$("dShow").after(fb)}
+ if(d.app)loadDeps(path);
+ $("dShow").onclick=()=>api("/api/reveal",{path}).catch(e=>toast(e.message));
  if($("dHist"))$("dHist").onclick=()=>historyDlg(path);$("dUse").onclick=()=>useInDlg(path);$("dReq").onclick=()=>reqNewDlg({ref:path});
  $("detail").querySelectorAll("[data-lver]").forEach(a=>a.onclick=()=>linkVersionsDlg(a.dataset.lver));
  $("detail").querySelectorAll("[data-exp]").forEach(a=>a.onclick=async()=>{await api("/api/ws/export_mark",{file:path,value:a.dataset.exp==="1"});selSig="";libGen=-1;await tick();setTimeout(()=>{selSig="";selectFile(path,true)},2500)});
@@ -662,6 +675,7 @@ function logHtml(e){const u=`<b>${esc(who(e.user))}</b>`,files=e.files||[],n=e.c
    if(e.action==="renamed"){const ps=e.pairs||[];return ps.length===1?`${u} moved ${esc(short(ps[0][0]))} → ${fileLink(ps[0][1])}`:`${u} moved ${ps.length} files`}return `${u} ${esc(e.action)} ${n} files`;
   case"saved":return `${u} saved ${fileLink(e.file)}`;
   case"upload":return `${u} uploaded ${e.count} file${e.count>1?"s":""}${e.via==="phone"?" from phone":""} → ${esc(e.folder)}`+(e.note?`<div class="q">“${esc(e.note)}”</div>`:"");
+  case"collected":return `${u}'s ${fileLink(e.file)} used ${e.count} file${e.count>1?"s":""} from outside the shared folder, copied into ${esc(e.folder)}`;
   case"sorted":return `${u} sorted ${e.count} file${e.count>1?"s":""} from the Inbox → ${esc(e.folder)}`;
   case"note":return `${u} commented on ${fileLink(e.file)}: “${esc(e.text)}”`;
   case"restore":return `${u} restored ${esc(short(e.file))} to an earlier save`;
@@ -713,6 +727,7 @@ function renderStatus(){const st=S.syncthing,sy=S.sync||{};let t;
  if(sy.installing)t="Sync: setting up... "+(sy.progress||0)+"%";else if(!st.ok)t="Sync: "+(st.mode==="missing"?"not set up":st.error);
  else{const f=st.folder,linked=(st.devices||[]).filter(d=>d.shared),con=linked.filter(d=>d.connected);t=!linked.length?"Sync: not linked with anyone yet":(con.length?"Synced with "+con.map(d=>d.name).join(", "):"Other PC offline")+(f?(f.needFiles>0?" · syncing "+f.needFiles+" files":" · up to date"):"")}
  const up=S.upload;if(up&&up.total)t+=` · receiving ${up.name} ${Math.floor(up.got/up.total*100)}%`;
+ const sw=S.storage&&S.storage.waiting_count;if(sw){const on=S.storage.waiting.some(w=>w.online);t+=` · getting ${sw} file${sw>1?"s":""}${on?"":" (waiting for the other PC)"}`}
  $("stSync").textContent=t;$("stVer").textContent="v"+S.version;
  $("stLive").textContent="Live: "+({on:Object.keys(remoteCur).length||Date.now()-Live.lastIn<120000?"connected":"on",connecting:"connecting...",retrying:"can't reach the relay, retrying",off:"off",unsupported:"not supported here"})[Live.status];
  $("title").textContent="RotLab: "+pname(pid);document.title=(S.unread.chat?"("+S.unread.chat+") ":"")+"RotLab"}
@@ -720,6 +735,51 @@ let lastSeenTs=null;
 function notify(){const evs=S.chat.concat(W.events.filter(e=>["req_new","req_submit"].includes(e.kind))).filter(e=>e.user!==S.me);const newest=evs.reduce((a,e)=>Math.max(a,e.ts),0);
  if(lastSeenTs!==null&&!focused)for(const e of evs.filter(e=>e.ts>lastSeenTs).slice(-3)){const body=e.kind?(wsLogHtml(e)||"").replace(/<[^>]+>/g,""):e.user+": "+e.text;if(window.Notification&&Notification.permission==="granted")new Notification("RotLab",{body})}
  lastSeenTs=Math.max(lastSeenTs||0,newest)}
+
+
+/* ---------------- files on demand ---------------- */
+function renderStoreSel(){const sel=$("storeSel");if(!sel||!S.storage)return;const cur=(S.storage.projects||{})[pid]||"",def=S.storage.default;
+ sel.innerHTML=`<option value="">This PC: default (${def==="all"?"keep everything":"only what I use"})</option><option value="all" ${cur==="all"?"selected":""}>This PC: keep everything</option><option value="ondemand" ${cur==="ondemand"?"selected":""}>This PC: only what I use</option>`;
+ sel.onchange=async()=>{await api("/api/storage/set",{pid,mode:sel.value||null});await tick();libGen=-1;loadLib(true);toast(sel.value==="ondemand"?"New big files in this project won't download until you need them":"Everything in this project will download")};
+ const mode=cur||def,remote=lib&&lib.items?lib.items.filter(i=>i.remote&&!i.getting).length:0,b=$("storeAct");
+ if(mode==="ondemand"&&remote){b.style.display="";b.textContent="Get all ("+remote+")";b.onclick=async()=>{await api("/api/storage/get",{pid});toast("Getting everything in "+pname(pid));tick()}}
+ else if(mode==="all"&&remote){b.style.display="";b.textContent="Get missing ("+remote+")";b.onclick=async()=>{await api("/api/storage/get",{pid});tick()}}
+ else{b.style.display="";b.textContent="Free up space";b.onclick=()=>freeProject()}}
+async function freeFiles(paths){if(!confirm("Remove this PC's copy? You'll still see previews, and can Get it again any time the other PC is on."))return;
+ try{const r=await api("/api/storage/free",{paths});toast(r.freed?"Freed "+size(r.bytes)+(r.kept.length?" · "+r.kept.length+" kept (no other PC keeps them)":""):(r.kept.length?"Not removed: no other PC keeps a copy":"Nothing to free"));selSig="";libGen=-1;await tick()}catch(e){toast(e.message)}}
+async function freeProject(){if(!confirm("Switch "+pname(pid)+" to 'only what I use' and remove this PC's copies of its big media files?\n\nOnly files another PC keeps are removed. Project files, notes and previews stay."))return;
+ try{const r=await api("/api/storage/free",{pid});toast("Freed "+size(r.bytes)+" ("+r.freed+" files)"+(r.kept.length?" · kept "+r.kept.length+" that only this PC has":""));libGen=-1;await tick();loadLib(true)}catch(e){toast(e.message)}}
+async function loadDeps(path){const box=$("dDeps");if(!box)return;box.innerHTML='<span class="dim" style="font-size:12px">Checking what this project uses...</span>';
+ let r;try{r=await api("/api/deps",{path})}catch(e){box.innerHTML="";return}if(!$("dDeps")||selPath!==path)return;const c=r.counts,n=r.items.length;
+ if(!n){box.innerHTML='<span class="dim" style="font-size:12px">No media files found inside this project.</span>';return}
+ const out=r.items.filter(i=>i.state==="outside"),miss=r.items.filter(i=>i.state==="missing");
+ box.innerHTML=`<div style="font-size:12px">Uses <b>${n}</b> file${n>1?"s":""}: ${c.here} here${c.remote+c.getting?` · <span style="color:var(--note)">${c.remote+c.getting} to get (${size(r.get_bytes)})</span>`:""}${out.length?` · <span style="color:#ffb27a">${out.length} outside the shared folder</span>`:""}${miss.length?` · <span class="dim">${miss.length} not found</span>`:""}
+  ${c.remote?' <button class="btn sm" id="depGet">Get them</button>':""}${out.length?' <button class="btn sm" id="depCol">Copy into project</button>':""} <a id="depList">list</a></div>`;
+ if($("depGet"))$("depGet").onclick=async()=>{await api("/api/storage/get",{paths:r.items.filter(i=>i.state==="remote").map(i=>i.path)});toast("Getting them");loadDeps(path)};
+ if($("depCol"))$("depCol").onclick=async()=>{const x=await api("/api/collect",{path});toast(x.files.length?"Copied "+x.files.length+" file(s) into "+pname(projOfPath(path))+"/Collected. If the app asks where they went, point it there.":"Nothing to copy");loadDeps(path)};
+ $("depList").onclick=()=>openDlg("Files used by "+short(path),`<div class="in" style="max-height:60vh;overflow:auto;padding:2px"><table><thead><tr><th>File</th><th>Status</th></tr></thead><tbody>${r.items.map(i=>`<tr><td title="${esc(i.raw)}">${esc(i.path||i.raw)}</td><td>${({here:"✓ here",remote:"☁ to get",getting:"⇣ getting",outside:"⚠ outside the shared folder",missing:"not found anywhere"})[i.state]}</td></tr>`).join("")}</tbody></table></div><div class="dim" style="font-size:12px">"Not found" usually means a plugin preset or a file from the app's own library: both PCs need it installed.</div><div class="btns"><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true})}
+
+/* ---------------- previews (made here for files this PC has, shared with everyone) ---------------- */
+let prevBusy=false;
+async function makePreview(it){const src="/media?path="+encodeURIComponent(it.path);
+ const cv=document.createElement("canvas"),cx=cv.getContext("2d");const out={path:it.path,size:it.size,kind:it.media};
+ const fit=(w,h,mw,mh)=>{const s=Math.min(mw/w,mh/h,1);return[Math.max(1,Math.round(w*s)),Math.max(1,Math.round(h*s))]};
+ if(it.media==="Images"||it.media==="Graphics"){const im=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=src});
+  const[w,h]=fit(im.naturalWidth,im.naturalHeight,480,360);cv.width=w;cv.height=h;cx.fillStyle="#222";cx.fillRect(0,0,w,h);cx.drawImage(im,0,0,w,h);out.w=im.naturalWidth;out.h=im.naturalHeight}
+ else if(it.media==="Video"){const v=document.createElement("video");v.muted=true;v.preload="auto";v.src=src;
+  await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=rej;setTimeout(()=>rej(new Error("timeout")),20000)});
+  const d=v.duration||0,[fw,fh]=fit(v.videoWidth||16,v.videoHeight||9,240,135);cv.width=fw*4;cv.height=fh;out.duration=d;out.w=v.videoWidth;out.h=v.videoHeight;
+  for(let k=0;k<4;k++){v.currentTime=Math.min(d*(0.1+k*0.25),Math.max(0,d-0.1));await new Promise((res,rej)=>{v.onseeked=res;setTimeout(res,6000)});cx.drawImage(v,k*fw,0,fw,fh)}
+  v.removeAttribute("src");v.load()}
+ else if(it.media==="Audio"){if(it.size>200e6)throw new Error("too big");const buf=await (await fetch(src)).arrayBuffer();const ac=new (window.AudioContext||window.webkitAudioContext)();
+  const ab=await ac.decodeAudioData(buf);ac.close&&ac.close();out.duration=ab.duration;const W=640,H=90,ch=ab.getChannelData(0),step=Math.max(1,Math.floor(ch.length/W));
+  cv.width=W;cv.height=H;cx.fillStyle="#141a24";cx.fillRect(0,0,W,H);cx.fillStyle="#6aa9ff";
+  for(let x=0;x<W;x++){let mx=0;for(let i=x*step,e=Math.min(ch.length,i+step);i<e;i+=4){const a=Math.abs(ch[i]);if(a>mx)mx=a}const bh=Math.max(1,mx*H*0.95);cx.fillRect(x,(H-bh)/2,1,bh)}}
+ out.data=cv.toDataURL("image/jpeg",0.72);return out}
+async function previewWorker(){if(prevBusy||!S||!S.configured||dlgOpen())return;prevBusy=true;
+ try{const r=await api("/api/preview/todo");for(const it of r.items){let out;try{out=await makePreview(it)}catch(e){out={path:it.path,size:it.size,kind:it.media}}
+  await api("/api/preview/save",out).catch(()=>{})}}catch(e){}prevBusy=false}
+setInterval(previewWorker,12000);setTimeout(previewWorker,4000);
 
 /* ---------------- find online ---------------- */
 const ON={gif:"mp4",needKey:null,kind:LS.get("on_kind","audio"),q:"",lic:LS.get("on_lic","any"),page:1,items:[],more:false,busy:false,err:"",total:0,res:"",added:{}};

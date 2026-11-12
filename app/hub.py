@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "3.4"
+HUB_VERSION = "3.5"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -638,7 +638,7 @@ def log_event(etype, **data):
     return append_jsonl(ACTIVITY_DIR, data)
 
 
-LOG_TYPES = {"files", "saved", "upload", "note", "restore", "joined", "sync_join", "sync_accept", "updated", "sorted"}
+LOG_TYPES = {"files", "saved", "upload", "note", "restore", "joined", "sync_join", "sync_accept", "updated", "sorted", "collected"}
 
 
 def all_log():
@@ -783,6 +783,24 @@ def added_by_index():
 def library(cat=None, q=None, project=None):
     with LIB_LOCK:
         items = list(LIB["items"])
+    local = {i["path"] for i in items}
+    rem = remote_index()
+    wanted = CONFIG.get("wanted") or {}
+    try:
+        marks = ws_state()["exports"]
+    except Exception:
+        marks = {}
+    for i in items:
+        r = rem.get(i["path"])
+        i["ondemand"] = storage_mode(i.get("project")) == "ondemand" and is_ondemand_ext(i["path"])
+        i["kept_elsewhere"] = bool(r and any(h["pinned"] for h in r["holders"]))
+    for p, r in rem.items():
+        if p in local or p.startswith("_hub/") or os.path.splitext(p)[1].lower() in SKIP_EXT:
+            continue
+        items.append({"path": p, "name": os.path.basename(p), "folder": os.path.dirname(p), "cat": category_of(p, marks),
+                      "media": media_of(p), "export": is_export(p, marks), "project": project_of_path(p),
+                      "size": r["size"], "mtime": r["mtime"], "remote": True, "getting": p in wanted,
+                      "holders": [h["user"] for h in r["holders"]]})
     if project:
         items = [i for i in items if i.get("project") == project]
     notes, tags = notes_index()
@@ -804,6 +822,7 @@ def library(cat=None, q=None, project=None):
         d["tags"] = tags.get(i["path"], [])
         d["notes"] = len(notes.get(i["path"], []))
         d["by"] = who.get(i["path"])
+        d["preview"] = os.path.exists(os.path.join(PREVIEW_DIR, preview_id(i["path"]) + ".jpg"))
         out.append(d)
     out.sort(key=lambda x: -x["mtime"])
     return {"items": out[:2000], "counts": counts, "gen": LIB["gen"], "inbox": inbox_files_count()}
@@ -812,7 +831,16 @@ def library(cat=None, q=None, project=None):
 def file_detail(path):
     full = safe_path(path)
     notes, tags = notes_index()
-    st_ = os.stat(full)
+    remote = None
+    try:
+        st_ = os.stat(full)
+    except OSError:
+        r = remote_index().get(path)
+        if not r:
+            raise
+        remote = {"holders": [h["user"] for h in r["holders"]], "online": sorted(online_users() & {h["user"] for h in r["holders"]}),
+                  "getting": path in (CONFIG.get("wanted") or {})}
+        st_ = type("S", (), {"st_size": r["size"], "st_mtime": r["mtime"]})()
     hist = history_list(path) if is_project_file(path) else []
     wst = ws_state()
     return {"path": path, "name": os.path.basename(full), "cat": category_of(path), "media": media_of(path),
@@ -820,7 +848,10 @@ def file_detail(path):
             "mtime": st_.st_mtime, "notes": notes.get(path, []), "tags": tags.get(path, []),
             "by": added_by_index().get(path), "history": hist[:5], "history_count": len(hist),
             "comments": [c for c in wst["comments"].values() if c["file"] == path],
-            "used_by": [l["lid"] for l in wst["links"].values() if l.get("version") == path or l.get("target") == path]}
+            "used_by": [l["lid"] for l in wst["links"].values() if l.get("version") == path or l.get("target") == path],
+            "remote": remote, "preview": preview_meta(path),
+            "ondemand": storage_mode(project_of_path(path)) == "ondemand" and is_ondemand_ext(path),
+            "freeable": remote is None and is_ondemand_ext(path)}
 
 
 # ---------------------------------------------------------------- where new files go
@@ -1241,6 +1272,7 @@ def watch_flush(force=False):
             continue
         snap = snapshot(p)
         log_event("saved", file=p, snapshot=(snap or {}).get("id"))
+        threading.Thread(target=collect_outside, args=(p,), daemon=True).start()
     added = [p for p in added if not is_project_file(p) and p not in RECENT_WRITES]
     modified = [p for p in modified if not is_project_file(p) and p not in RECENT_WRITES]
     deleted = [p for p in deleted if p not in RECENT_WRITES]
@@ -1859,6 +1891,37 @@ def ws_post(path, body):
         with LIB_LOCK:
             LIB["sig"] = None
         return 200, {"ok": True}
+    if path == "/api/storage/set":
+        storage_set(b)
+        return 200, {"ok": True}
+    if path == "/api/storage/get":
+        paths = b.get("paths") or []
+        if b.get("pid"):
+            folder = (ws_state()["projects"].get(b["pid"]) or {}).get("folder") or (SHARED if b["pid"] == SHARED else None)
+            paths = [p for p in remote_index() if folder and p.startswith(folder + "/")]
+        return 200, {"ok": True, "count": storage_get(paths)}
+    if path == "/api/storage/free":
+        paths = b.get("paths") or []
+        if b.get("pid"):
+            folder = (ws_state()["projects"].get(b["pid"]) or {}).get("folder") or (SHARED if b["pid"] == SHARED else None)
+            with LIB_LOCK:
+                paths = [i["path"] for i in LIB["items"] if folder and i["path"].startswith(folder + "/")]
+            CONFIG.setdefault("proj_storage", {})[b["pid"]] = "ondemand"
+            for w in [w for w in (CONFIG.get("wanted") or {}) if folder and w.startswith(folder + "/")]:
+                CONFIG["wanted"].pop(w, None)
+            save_config()
+        return 200, storage_free(paths)
+    if path == "/api/deps":
+        return 200, project_deps(b.get("path", ""))
+    if path == "/api/open_project":
+        return 200, open_project(b.get("path", ""))
+    if path == "/api/collect":
+        return 200, {"files": collect_outside(b.get("path", ""))}
+    if path == "/api/preview/todo":
+        return 200, {"items": preview_todo()}
+    if path == "/api/preview/save":
+        preview_save(b)
+        return 200, {"ok": True}
     if path == "/api/online/search":
         return 200, online_search(b.get("kind"), b.get("q"), b.get("page"), b.get("lic") or "any")
     if path == "/api/online/key":
@@ -1871,6 +1934,430 @@ def ws_post(path, body):
         return 200, {"items": outputs_of(b.get("pid"), b.get("cat") or "Any")[:50]}
     return None
 
+
+
+# ---------------------------------------------------------------- storage: previews, files on demand, what projects use
+# Every PC shares a small list of the files it has (_hub/index) and small previews (_hub/previews).
+# Each PC picks per project: keep everything (default) or only what it uses. "Only what I use" is done with
+# Syncthing ignore lines, so big media isn't downloaded until someone clicks Get (or opens a project that needs it).
+INDEX_DIR = os.path.join(HUB_DIR, "index")
+PREVIEW_DIR = os.path.join(HUB_DIR, "previews")
+ONDEMAND_EXT = sorted((CAT_EXT["Video"] | CAT_EXT["Audio"] | CAT_EXT["Images"] | {".png", ".gif", ".webp", ".psd", ".exr", ".hdr"}))
+DEP_EXT = ONDEMAND_EXT + [".svg", ".mid", ".midi", ".fst", ".zip"]
+STORE = {"index_sig": None, "index_ts": 0, "ign_sig": None, "deps": {}, "opening": {}}
+MANAGED_START, MANAGED_END = "// rotlab: files on demand (managed, do not edit) >>>", "// <<< rotlab"
+
+
+def storage_default():
+    return CONFIG.get("storage", "all")
+
+
+def storage_mode(pid):
+    return (CONFIG.get("proj_storage") or {}).get(pid) or storage_default()
+
+
+def is_ondemand_ext(path):
+    return os.path.splitext(path)[1].lower() in ONDEMAND_EXT
+
+
+def is_pinned(path, pid=None):
+    """Does this PC promise to keep this file?"""
+    pid = pid or project_of_path(path)
+    if path in (CONFIG.get("freed") or {}):
+        return False
+    if storage_mode(pid) == "all" or not is_ondemand_ext(path):
+        return True
+    return path in (CONFIG.get("wanted") or {})
+
+
+def write_index(items):
+    if not me():
+        return
+    files = {i["path"]: [i["size"], int(i["mtime"]), 1 if is_pinned(i["path"], i.get("project")) else 0] for i in items}
+    sig = hashlib.md5(json.dumps(files, sort_keys=True).encode()).hexdigest()
+    if sig == STORE["index_sig"] and now() - STORE["index_ts"] < 1800:
+        return
+    os.makedirs(INDEX_DIR, exist_ok=True)
+    write_json_atomic(os.path.join(INDEX_DIR, slug(me()) + ".json"), {"user": me(), "ts": now(), "files": files})
+    STORE["index_sig"], STORE["index_ts"] = sig, now()
+
+
+def remote_index():
+    """path -> {size, mtime, holders: [{user, pinned, ts}]} for files other PCs have."""
+    out = {}
+    try:
+        names = os.listdir(INDEX_DIR)
+    except OSError:
+        return out
+    for fn in names:
+        if not fn.endswith(".json") or is_temp(fn) or fn == slug(me() or "") + ".json":
+            continue
+        d = read_json(os.path.join(INDEX_DIR, fn)) or {}
+        user, ts = d.get("user") or fn[:-5], d.get("ts") or 0
+        for p, v in (d.get("files") or {}).items():
+            e = out.setdefault(p, {"size": v[0], "mtime": v[1], "holders": []})
+            e["holders"].append({"user": user, "pinned": bool(v[2]) if len(v) > 2 else True, "ts": ts})
+    return out
+
+
+def online_users():
+    return {p["user"] for p in read_presence() if p["live"] != "offline"}
+
+
+# ---- previews (made by the RotLab window of the PC that has the original: thumbnails, film strips, waveforms)
+def preview_id(path):
+    return hashlib.sha1(path.encode("utf-8")).hexdigest()[:20]
+
+
+def preview_meta(path):
+    return read_json(os.path.join(PREVIEW_DIR, preview_id(path) + ".json"))
+
+
+def preview_todo(limit=4):
+    with LIB_LOCK:
+        items = list(LIB["items"])
+    out = []
+    for i in sorted(items, key=lambda x: -x["mtime"]):
+        if i["media"] not in ("Video", "Audio", "Images", "Graphics"):
+            continue
+        ext = os.path.splitext(i["path"])[1].lower()
+        if i["media"] == "Graphics" and ext not in (".png", ".gif", ".webp", ".svg"):
+            continue
+        if i["media"] == "Images" and ext not in (".jpg", ".jpeg", ".bmp"):
+            continue
+        m = preview_meta(i["path"])
+        if m and m.get("size") == i["size"] and (m.get("ok") or m.get("tries", 0) >= 2):
+            continue
+        out.append({"path": i["path"], "media": i["media"], "size": i["size"]})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def preview_save(b):
+    path = b.get("path", "")
+    safe_path(path)
+    os.makedirs(PREVIEW_DIR, exist_ok=True)
+    pid_ = preview_id(path)
+    old = preview_meta(path) or {}
+    meta = {"path": path, "size": b.get("size"), "ok": False, "tries": (old.get("tries") or 0) + 1,
+            "kind": b.get("kind"), "duration": b.get("duration"), "w": b.get("w"), "h": b.get("h"), "ts": now()}
+    data = b.get("data") or ""
+    if data.startswith("data:image/jpeg;base64,"):
+        raw = base64.b64decode(data.split(",", 1)[1])
+        if len(raw) > 600 * 1024:
+            raise ValueError("preview too big")
+        with open(os.path.join(PREVIEW_DIR, pid_ + ".jpg.tmp"), "wb") as f:
+            f.write(raw)
+        os.replace(os.path.join(PREVIEW_DIR, pid_ + ".jpg.tmp"), os.path.join(PREVIEW_DIR, pid_ + ".jpg"))
+        meta["ok"] = True
+    write_json_atomic(os.path.join(PREVIEW_DIR, pid_ + ".json"), meta)
+
+
+# ---- Syncthing ignore lines for "only what I use"
+def _pat(path):
+    return "/" + re.sub(r"[\[\]{}*?\\]", "?", path)
+
+
+def managed_ignores():
+    lines = []
+    st_ = ws_state()
+    folders = [(p["pid"], p["folder"]) for p in st_["projects"].values()] + [(SHARED, SHARED)]
+    wanted, freed = CONFIG.get("wanted") or {}, CONFIG.get("freed") or {}
+    for p in sorted(freed):
+        lines.append(_pat(p))
+    for pid, folder in folders:
+        if storage_mode(pid) != "ondemand":
+            continue
+        for w in sorted(x for x in wanted if x.startswith(folder + "/")):
+            lines.append("!" + _pat(w))
+        for ext in ONDEMAND_EXT:
+            lines.append("(?i)%s/**%s" % (_pat(folder), ext))
+    return lines
+
+
+def apply_ignores(force=False):
+    fid = CONFIG.get("folder_id")
+    if not fid or ST.get("mode") not in ("external", "builtin"):
+        return False
+    want = managed_ignores()
+    sig = hashlib.md5("\n".join(want).encode()).hexdigest()
+    if sig == STORE["ign_sig"] and not force:
+        return True
+    cur = (st("GET", "/rest/db/ignores?folder=" + fid) or {}).get("ignore") or list(IGNORE_DEFAULTS)
+    keep, inside = [], False
+    for ln in cur:
+        if ln == MANAGED_START:
+            inside = True
+        elif ln == MANAGED_END:
+            inside = False
+        elif not inside:
+            keep.append(ln)
+    new = keep + ([MANAGED_START] + want + [MANAGED_END] if want else [])
+    if new != cur:
+        st("POST", "/rest/db/ignores?folder=" + fid, {"ignore": new})
+    STORE["ign_sig"] = sig
+    return True
+
+
+def ignores_active(paths):
+    """True when Syncthing has the current ignore lines (so deleting these files won't spread to other PCs)."""
+    fid = CONFIG.get("folder_id")
+    try:
+        cur = (st("GET", "/rest/db/ignores?folder=" + fid) or {}).get("ignore") or []
+    except Exception:
+        return False
+    want = managed_ignores()
+    return all(x in cur for x in want)
+
+
+def storage_set(b):
+    pid = b.get("pid")
+    if pid:
+        ps = CONFIG.setdefault("proj_storage", {})
+        if b.get("mode") in ("all", "ondemand"):
+            ps[pid] = b["mode"]
+        else:
+            ps.pop(pid, None)
+    elif b.get("mode") in ("all", "ondemand"):
+        CONFIG["storage"] = b["mode"]
+    save_config()
+    apply_ignores()
+
+
+def storage_get(paths):
+    wanted, freed = CONFIG.setdefault("wanted", {}), CONFIG.setdefault("freed", {})
+    n = 0
+    for p in paths:
+        safe_path(p)
+        wanted[p] = now()
+        if freed.pop(p, None) is not None:
+            pass
+        n += 1
+    save_config()
+    apply_ignores()
+    return n
+
+
+def storage_free(paths):
+    """Remove local copies of big files - only when another PC promises to keep them, and only after
+    Syncthing has been told to ignore them (so the deletion stays on this PC)."""
+    if ST.get("mode") not in ("external", "builtin") or not CONFIG.get("folder_id"):
+        raise ValueError("Sync isn't running, so RotLab can't make sure another PC keeps these files.")
+    rem = remote_index()
+    ok, refused = [], []
+    for p in paths:
+        full = safe_path(p)
+        if not os.path.isfile(full) or not is_ondemand_ext(p):
+            continue
+        try:
+            size = os.path.getsize(full)
+        except OSError:
+            continue
+        keepers = [h for h in (rem.get(p) or {}).get("holders", []) if h["pinned"] and now() - h["ts"] < 3 * 86400
+                   and rem[p]["size"] == size]
+        (ok if keepers else refused).append(p)
+    wanted, freed = CONFIG.setdefault("wanted", {}), CONFIG.setdefault("freed", {})
+    for p in ok:
+        wanted.pop(p, None)
+        if storage_mode(project_of_path(p)) == "all":
+            freed[p] = now()
+    save_config()
+    apply_ignores(force=True)
+    time.sleep(1.5)
+    if not ignores_active(ok):
+        raise ValueError("Sync didn't confirm the change yet. Nothing was removed; try again in a moment.")
+    freed_bytes = 0
+    for p in ok:
+        try:
+            full = safe_path(p)
+            freed_bytes += os.path.getsize(full)
+            mark_written(p)
+            os.remove(full)
+        except OSError:
+            pass
+    with LIB_LOCK:
+        LIB["sig"] = None
+    return {"freed": len(ok), "bytes": freed_bytes, "kept": refused}
+
+
+# ---- what a project file uses (VEGAS, FL Studio, Blender, Premiere...: paths are stored inside the file)
+_U16 = re.compile(rb"(?:[\x20-\xff]\x00){5,300}")
+_ASC = re.compile(rb"[\x20-\x7e]{5,300}")
+_EXT_RE = re.compile(r"\.(%s)$" % "|".join(e.lstrip(".") for e in DEP_EXT), re.I)
+FACTORY_HINTS = ("image-line", "\\program files", "/program files", "\\programdata\\", "packs\\", "fl studio\\data")
+
+
+def _strings_in(path, limit=300 * 1024 * 1024):
+    full = safe_path(path)
+    with open(full, "rb") as f:
+        data = f.read(limit)
+    if path.lower().endswith(".prproj") and data[:2] == b"\x1f\x8b":
+        import gzip
+        try:
+            data = gzip.decompress(data)
+        except Exception:
+            pass
+    seen = set()
+    for m in _U16.finditer(data):
+        s = m.group(0).decode("utf-16-le", "ignore")
+        for part in re.split(r"[\x00-\x1f]", s):
+            seen.add(part)
+    for m in _ASC.finditer(data):
+        seen.add(m.group(0).decode("latin-1"))
+    out = []
+    for s in seen:
+        s = s.strip().strip('"')
+        if "file://" in s:
+            s = s.split("file://", 1)[1]
+        mm = re.search(r"([A-Za-z]:[\\/]|\\\\|/|//)[^<>\"|?*\x00]*", s)
+        cand = mm.group(0) if mm else s
+        if _EXT_RE.search(cand) and ("\\" in cand or "/" in cand):
+            out.append(cand)
+    return sorted(set(out))
+
+
+def project_deps(path):
+    full = safe_path(path)
+    mt = os.path.getmtime(full)
+    c = STORE["deps"].get(path)
+    if c and c[0] == mt and now() - c[1] < 60:
+        return c[2]
+    raws = _strings_in(path)
+    with LIB_LOCK:
+        local = {i["path"]: i for i in LIB["items"]}
+    rem = remote_index()
+    allp = set(local) | set(rem)
+    by_name = {}
+    for p in allp:
+        by_name.setdefault(os.path.basename(p).lower(), []).append(p)
+    here_dir = os.path.dirname(path)
+    items, seen = [], set()
+    for raw in raws:
+        norm = raw.replace("\\", "/")
+        low = raw.lower()
+        if norm.startswith("//"):  # Blender: relative to the .blend
+            norm = (here_dir + "/" + norm[2:]) if here_dir else norm[2:]
+        comps = [x for x in norm.split("/") if x and x not in (".",)]
+        if not comps:
+            continue
+        name = comps[-1].lower()
+        best, best_n = None, 0
+        for cand in by_name.get(name, []):
+            cc = cand.lower().split("/")
+            n = 0
+            while n < min(len(cc), len(comps)) and cc[-1 - n] == comps[-1 - n].lower():
+                n += 1
+            if n > best_n:
+                best, best_n = cand, n
+        if best:
+            if best in seen:
+                continue
+            seen.add(best)
+            if best in local:
+                items.append({"raw": raw, "path": best, "state": "here", "size": local[best]["size"]})
+            else:
+                r = rem[best]
+                items.append({"raw": raw, "path": best, "state": "getting" if best in (CONFIG.get("wanted") or {}) else "remote",
+                              "size": r["size"], "holders": [h["user"] for h in r["holders"]]})
+        else:
+            if any(h in low for h in FACTORY_HINTS):
+                continue
+            exists = os.path.isabs(raw) and os.path.isfile(raw)
+            items.append({"raw": raw, "path": None, "state": "outside" if exists else "missing", "size": os.path.getsize(raw) if exists else None})
+    res = {"items": items, "counts": {k: sum(1 for i in items if i["state"] == k) for k in ("here", "remote", "getting", "outside", "missing")},
+           "get_bytes": sum(i["size"] or 0 for i in items if i["state"] in ("remote", "getting"))}
+    STORE["deps"][path] = (mt, now(), res)
+    return res
+
+
+def collect_outside(path):
+    """Copy files a project uses from outside the workspace into <project>/Collected, so the other PC gets them."""
+    try:
+        deps = project_deps(path)
+    except Exception:
+        return []
+    done = []
+    dest_dir = os.path.join(proj_dir(project_of_path(path)), "Collected")
+    for i in deps["items"]:
+        if i["state"] != "outside":
+            continue
+        src = i["raw"]
+        try:
+            if os.path.getsize(src) > 4 * 1024 ** 3:
+                continue
+            os.makedirs(dest_dir, exist_ok=True)
+            dst = os.path.join(dest_dir, os.path.basename(src))
+            if os.path.exists(dst) and os.path.getsize(dst) == os.path.getsize(src):
+                continue
+            if os.path.exists(dst):
+                dst = unique_path(dest_dir, os.path.basename(src))
+            tmp = os.path.join(dest_dir, "~syncthing~rl-col-%s.tmp" % uuid.uuid4().hex[:8])
+            shutil.copy2(src, tmp)
+            os.replace(tmp, dst)
+            mark_written(rel(dst))
+            done.append(rel(dst))
+        except OSError as e:
+            print("collect:", repr(e))
+    if done:
+        STORE["deps"].pop(path, None)
+        log_event("collected", file=path, files=done, count=len(done), folder=os.path.dirname(done[0]))
+    return done
+
+
+def open_project(path):
+    """Get whatever the project uses that isn't here yet, then open it."""
+    deps = project_deps(path)
+    need = [i["path"] for i in deps["items"] if i["state"] in ("remote", "getting")]
+    if need:
+        storage_get(need)
+        STORE["opening"][path] = now()
+        return {"waiting": len(need), "bytes": deps["get_bytes"]}
+    open_path(safe_path(path))
+    return {"opened": True}
+
+
+def storage_tick():
+    """Every few seconds: refresh our index, keep ignore lines right, open projects that finished downloading."""
+    with LIB_LOCK:
+        items = list(LIB["items"])
+    write_index(items)
+    try:
+        apply_ignores()
+    except Exception as e:
+        print("ignores:", repr(e))
+    for path, ts in list(STORE["opening"].items()):
+        if now() - ts > 6 * 3600:
+            STORE["opening"].pop(path, None)
+            continue
+        STORE["deps"].pop(path, None)
+        try:
+            d = project_deps(path)
+        except Exception:
+            STORE["opening"].pop(path, None)
+            continue
+        if not any(i["state"] in ("remote", "getting") for i in d["items"]):
+            STORE["opening"].pop(path, None)
+            try:
+                open_path(safe_path(path))
+            except Exception as e:
+                print("open after get:", e)
+
+
+def storage_state():
+    wanted = CONFIG.get("wanted") or {}
+    with LIB_LOCK:
+        have = {i["path"] for i in LIB["items"]}
+    waiting = [p for p in wanted if p not in have]
+    rem = remote_index() if waiting else {}
+    online = online_users() if waiting else set()
+    w = []
+    for p in waiting[:50]:
+        holders = [h["user"] for h in (rem.get(p) or {}).get("holders", [])]
+        w.append({"path": p, "size": (rem.get(p) or {}).get("size"), "holders": holders,
+                  "online": any(h in online for h in holders)})
+    return {"default": storage_default(), "projects": CONFIG.get("proj_storage") or {}, "waiting": w,
+            "waiting_count": len(waiting), "opening": list(STORE["opening"])}
 
 
 # ---------------------------------------------------------------- find online (free assets)
@@ -2352,6 +2839,11 @@ def monitor():
                     ensure_default_project()
                 if tick % 4 == 3:
                     auto_update_links()
+                if tick % 5 == 2:
+                    try:
+                        storage_tick()
+                    except Exception as e:
+                        print("storage:", repr(e))
                 watch_poll()
                 watch_flush()
                 status = compute_status(vegas, ui_seen, view)
@@ -2471,8 +2963,9 @@ def build_state():
         "settings": {"auto_sort": CONFIG.get("auto_sort", True), "date_folders": CONFIG.get("date_folders", True),
                      "autostart": get_autostart(), "windows": os.name == "nt",
                      "native_window": has_native_window(), "folders": CONFIG.get("folders"),
-                     "github_updates": CONFIG.get("github_updates", True), "live": CONFIG.get("live", True)},
+                     "github_updates": CONFIG.get("github_updates", True), "live": CONFIG.get("live", True), "storage": storage_default()},
         "live": live_info(),
+        "storage": storage_state(),
         "github": {"latest": GH["latest"], "error": GH["error"], "checked": GH["checked"], "busy": GH["busy"]},
     }
 
@@ -2666,6 +3159,13 @@ class Handler(BaseHTTPRequestHandler):
                 with STATE_LOCK:
                     STATE["ui_seen"] = now()
             self._json(200, build_state())
+        elif u.path == "/preview":
+            p = parse_qs(u.query).get("path", [""])[0]
+            f = os.path.join(PREVIEW_DIR, preview_id(p) + ".jpg")
+            if os.path.isfile(f):
+                self._send_file(f)
+            else:
+                self._json(404, {"error": "no preview"})
         elif u.path == "/media":
             try:
                 self._send_file(safe_path(parse_qs(u.query).get("path", [""])[0]))
