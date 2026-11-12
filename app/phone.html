@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a246a"><title>Upload to RotLab</title>
+<style>
+:root{--face:#2b2b2b;--hi:#6a6a6a;--lt:#454545;--sh:#1a1a1a;--dk:#000;--field:#121212;--text:#e8e8e8;--dim:#a8a8a8;--sel:#0a246a;--sel2:#3a6ea5;--note:#e8d27a}
+*{box-sizing:border-box}
+body{margin:0;background:#0b0b0b;color:var(--text);font:16px/1.4 Tahoma,Verdana,system-ui,sans-serif;padding:10px 10px 30px}
+button,input,textarea{font:inherit;color:inherit}
+.out{background:var(--face);box-shadow:inset -1px -1px var(--dk),inset 1px 1px var(--hi),inset -2px -2px var(--sh),inset 2px 2px var(--lt)}
+.in{background:var(--field);box-shadow:inset -1px -1px var(--hi),inset 1px 1px var(--dk),inset -2px -2px var(--lt),inset 2px 2px var(--sh)}
+.win{padding:3px}
+.tb{padding:7px 9px;background:linear-gradient(90deg,var(--sel),var(--sel2));color:#fff;font-weight:bold}
+.sub{padding:6px 9px;font-size:13px;color:var(--dim);border-bottom:1px solid var(--dk);box-shadow:0 1px 0 var(--lt)}
+.body{padding:10px;display:flex;flex-direction:column;gap:11px}
+.btn{display:block;width:100%;min-height:48px;border:0;background:var(--face);cursor:pointer;font-weight:bold;box-shadow:inset -1px -1px var(--dk),inset 1px 1px var(--hi),inset -2px -2px var(--sh),inset 2px 2px var(--lt)}
+.btn:active{box-shadow:inset -1px -1px var(--hi),inset 1px 1px var(--dk),inset -2px -2px var(--lt),inset 2px 2px var(--sh)}
+.btn:disabled{color:#6b6b6b}
+.field{width:100%;border:0;background:var(--field);padding:9px;box-shadow:inset -1px -1px var(--hi),inset 1px 1px var(--dk),inset -2px -2px var(--lt),inset 2px 2px var(--sh)}
+input[type=tel].field{font-size:28px;letter-spacing:.3em;text-align:center}
+.f{padding:7px 4px;border-bottom:1px solid #262626}.f:last-child{border:0}
+.f .n{display:flex;justify-content:space-between;gap:8px}
+.f .n span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.f .s{font-size:13px;color:var(--dim);white-space:nowrap}
+.f .fn{font-size:13px;color:var(--note);margin-top:2px}
+.f .add{font-size:13px;color:#9db8ff;background:none;border:0;padding:4px 0;text-decoration:underline}
+.bar{height:10px;margin-top:5px;padding:1px}.bar i{display:block;height:100%;width:0;background:var(--sel2)}
+.f.ok .bar i{background:#3fbf6a}.f.err .s{color:#ff8a8a}
+.chips{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 10px}
+.chips label{display:flex;align-items:center;gap:9px;min-height:44px}
+.chips input{width:20px;height:20px}
+.dim{color:var(--dim)}.hide{display:none!important}
+</style></head><body>
+<div class="win out">
+ <div class="tb">Upload to RotLab</div>
+ <div class="sub" id="sub">Send videos, audio and photos to the project.</div>
+ <div class="body" id="pinCard">
+  <label for="pin">Enter the 6-digit PIN shown on the PC (Phone menu):</label>
+  <input type="tel" id="pin" class="field" maxlength="6" inputmode="numeric" autocomplete="one-time-code">
+  <button class="btn" id="pinBtn">Connect</button>
+  <div id="pinErr" style="color:#ff8a8a"></div>
+ </div>
+ <div class="body hide" id="upCard">
+  <label class="btn" for="files" style="display:flex;align-items:center;justify-content:center">Choose videos / photos...</label>
+  <input type="file" id="files" multiple accept="video/*,image/*,audio/*" class="hide">
+  <div class="in hide" id="list" style="padding:2px 8px"></div>
+  <div id="noteBox" class="hide" style="display:flex;flex-direction:column;gap:5px">
+   <label for="note">Note for this batch <span class="dim">(optional)</span>:</label>
+   <textarea id="note" class="field" rows="3"></textarea>
+   <div class="chips" id="tags"></div>
+  </div>
+  <button class="btn hide" id="go">Upload</button>
+  <div id="summary" class="hide" style="font-weight:bold"></div>
+  <button class="btn hide" id="retry">Retry failed</button>
+  <div class="dim" style="font-size:13px;text-align:center">Keep this page open and the screen on until it's done.</div>
+ </div>
+</div>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const size=b=>b>=1e9?(b/1e9).toFixed(2)+" GB":b>=1e6?(b/1e6).toFixed(1)+" MB":Math.ceil(b/1e3)+" KB";
+let PIN=localStorage.getItem("vh_pin")||"",queue=[],busy=false,batch=null;
+async function hello(){const r=await fetch("/api/hello",{headers:{"X-Pin":PIN}});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||"Can't connect");return j}
+async function connect(){$("pinErr").textContent="";
+ try{const j=await hello();localStorage.setItem("vh_pin",PIN);$("pinCard").classList.add("hide");$("upCard").classList.remove("hide");
+  $("sub").textContent="Connected to "+j.pc+"'s PC"+(j.online&&j.online.length?" · "+j.online.join(", ")+" online":"")+" · "+size(j.free)+" free";
+  $("tags").innerHTML=j.tags.map(t=>`<label><input type="checkbox" value="${esc(t)}"> ${esc(t)}</label>`).join("")}
+ catch(e){$("pinCard").classList.remove("hide");$("upCard").classList.add("hide");if(PIN)$("pinErr").textContent=e.message}}
+$("pinBtn").onclick=()=>{PIN=$("pin").value.trim();connect()};$("pin").onkeydown=e=>{if(e.key==="Enter")$("pinBtn").click()};
+$("files").onchange=()=>{for(const f of $("files").files){const el=document.createElement("div");el.className="f";queue.push({f,el,state:"new",note:""});draw(queue[queue.length-1])}
+ $("files").value="";$("list").classList.remove("hide");$("noteBox").classList.remove("hide");refresh()};
+function draw(it){const st=it.state==="new"?size(it.f.size):it.state==="wait"?"waiting":it.state==="ok"?"✓ "+size(it.f.size):it.state==="err"?it.err:it.pct+"%";
+ it.el.className="f"+(it.state==="ok"?" ok":it.state==="err"?" err":"");
+ it.el.innerHTML=`<div class="n"><span>${esc(it.f.name)}</span><span class="s">${esc(st)}</span></div>`+(it.note?`<div class="fn">Note: ${esc(it.note)}</div>`:"")+
+  (it.state==="new"?`<button class="add">${it.note?"Change note":"Add a note for this file"}</button>`:"")+(it.state!=="new"?`<div class="bar in"><i style="width:${it.state==="ok"?100:(it.pct||0)}%"></i></div>`:"");
+ const b=it.el.querySelector(".add");if(b)b.onclick=()=>{const v=prompt("Note for "+it.f.name+":",it.note);if(v!==null){it.note=v.trim();draw(it)}};
+ if(!it.el.parentNode)$("list").appendChild(it.el)}
+function refresh(){const n=queue.filter(x=>x.state==="new").length,ok=queue.filter(x=>x.state==="ok").length,err=queue.filter(x=>x.state==="err").length;
+ $("go").classList.toggle("hide",!n||busy);$("go").textContent="Upload "+n+" file"+(n>1?"s":"");
+ $("summary").classList.toggle("hide",!busy&&!ok&&!err);$("summary").textContent=busy?`Uploading… ${ok} of ${queue.length} done`:(err?`${ok} uploaded, ${err} failed`:`✅ All ${ok} uploaded`);
+ $("retry").classList.toggle("hide",busy||!err)}
+function up(it){return new Promise(res=>{const x=new XMLHttpRequest();
+ x.open("POST",`/api/upload?name=${encodeURIComponent(it.f.name)}&lm=${it.f.lastModified||""}&batch=${batch}&fnote=${encodeURIComponent(it.note||"")}`);
+ x.setRequestHeader("X-Pin",PIN);x.setRequestHeader("Content-Type","application/octet-stream");
+ x.upload.onprogress=e=>{if(e.lengthComputable){it.pct=Math.floor(e.loaded/e.total*100);draw(it)}};
+ x.onload=()=>{let j={};try{j=JSON.parse(x.responseText)}catch(e){}if(x.status===200)it.state="ok";else{it.state="err";it.err=j.error||("Error "+x.status);if(x.status===401)localStorage.removeItem("vh_pin")}draw(it);res()};
+ x.onerror=()=>{it.state="err";it.err="Connection lost";draw(it);res()};it.state="up";it.pct=0;draw(it);x.send(it.f)})}
+async function run(){if(busy)return;busy=true;batch=Math.random().toString(36).slice(2,12);
+ const note=$("note").value.trim(),tags=[...$("tags").querySelectorAll("input:checked")].map(x=>x.value);
+ queue.filter(x=>x.state==="new").forEach(x=>{x.state="wait";draw(x)});refresh();let item;
+ while((item=queue.find(x=>x.state==="wait"))){await up(item);refresh()}
+ await fetch("/api/done",{method:"POST",headers:{"X-Pin":PIN,"Content-Type":"application/json"},body:JSON.stringify({batch,note,tags})}).catch(()=>{});
+ busy=false;refresh()}
+$("go").onclick=run;
+$("retry").onclick=()=>{queue.filter(x=>x.state==="err").forEach(x=>{x.state="new";draw(x)});refresh()};
+if(PIN)connect();
+</script></body></html>

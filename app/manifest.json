@@ -1,0 +1,12 @@
+{
+ "version": "2.1",
+ "files": [
+  "ui.html",
+  "phone.html",
+  "hub.ico",
+  "Install RotLab.cmd",
+  "Install RotLab.pyw",
+  "README.md",
+  "hub.py"
+ ]
+}

@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RotLab</title>
+<style>
+:root{--face:#2b2b2b;--hi:#6a6a6a;--lt:#454545;--sh:#1a1a1a;--dk:#000;--field:#121212;--text:#e8e8e8;--dim:#a8a8a8;--sel:#0a246a;--sel2:#3a6ea5;--note:#e8d27a}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#0b0b0b;color:var(--text);font:13px/1.4 Tahoma,Verdana,"Segoe UI",sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+.out{background:var(--face);box-shadow:inset -1px -1px var(--dk),inset 1px 1px var(--hi),inset -2px -2px var(--sh),inset 2px 2px var(--lt)}
+.in{background:var(--field);box-shadow:inset -1px -1px var(--hi),inset 1px 1px var(--dk),inset -2px -2px var(--lt),inset 2px 2px var(--sh)}
+.btn{background:var(--face);border:0;padding:3px 12px;min-height:25px;cursor:pointer;white-space:nowrap;box-shadow:inset -1px -1px var(--dk),inset 1px 1px var(--hi),inset -2px -2px var(--sh),inset 2px 2px var(--lt)}
+.btn:active,.btn.down{box-shadow:inset -1px -1px var(--hi),inset 1px 1px var(--dk),inset -2px -2px var(--lt),inset 2px 2px var(--sh);padding:4px 11px 2px 13px}
+.btn:disabled{color:#6b6b6b;cursor:default}
+.btn.sm{min-height:21px;padding:1px 8px}
+.btn:focus-visible,.tab:focus-visible{outline:1px dotted #ddd;outline-offset:-5px}
+.field{background:var(--field);border:0;padding:4px 6px;box-shadow:inset -1px -1px var(--hi),inset 1px 1px var(--dk),inset -2px -2px var(--lt),inset 2px 2px var(--sh)}
+.field:focus{outline:1px dotted #888;outline-offset:-4px}
+select.field{padding:3px 4px}
+.dim{color:var(--dim)}
+.win{position:fixed;inset:0;display:flex;flex-direction:column;padding:3px}
+.titlebar{display:flex;align-items:center;gap:6px;padding:3px 3px 3px 6px;background:linear-gradient(90deg,var(--sel),var(--sel2));color:#fff;font-weight:bold;-webkit-app-region:drag;user-select:none}
+.titlebar span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.menubar{display:flex;gap:1px;padding:2px;border-bottom:1px solid var(--dk);box-shadow:0 1px 0 var(--lt);position:relative;z-index:20}
+.mi{position:relative}
+.mi > button{background:none;border:0;padding:2px 9px;cursor:pointer}
+.mi > button u{text-decoration:underline}
+.mi.open > button{background:var(--sel);color:#fff}
+.drop{position:absolute;top:100%;left:0;min-width:220px;padding:3px;display:none;z-index:30}
+.mi.open .drop{display:block}
+.drop button{display:flex;justify-content:space-between;width:100%;background:none;border:0;text-align:left;padding:4px 20px;cursor:pointer}
+.drop button:hover,.drop button:focus{background:var(--sel);color:#fff;outline:none}
+.drop hr{border:0;border-top:1px solid var(--dk);border-bottom:1px solid var(--lt);margin:3px 2px}
+.toolbar{display:flex;gap:6px;padding:5px 6px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--dk);box-shadow:0 1px 0 var(--lt)}
+.banner{margin:6px 6px 0;padding:6px 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.banner.warn{background:#3a1d1d;box-shadow:inset 0 0 0 1px #7a2c2c}
+.banner.info{background:#1b2333;box-shadow:inset 0 0 0 1px #34507e}
+.banner.ok{background:#1d2a1d;box-shadow:inset 0 0 0 1px #2f5a3a}
+.main{flex:1;min-height:0;display:flex;gap:6px;padding:6px}
+.cats{width:150px;flex:none;padding:4px;overflow:auto}
+.cat{display:flex;justify-content:space-between;padding:3px 6px;cursor:pointer;border:0;background:none;width:100%;text-align:left}
+.cat.on{background:var(--sel);color:#fff}
+.cat .n{color:var(--dim)}.cat.on .n{color:#cfd8ff}
+.sep{height:1px;background:var(--dk);box-shadow:0 1px 0 var(--lt);margin:6px 2px}
+.center{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.list{flex:1;min-height:140px;overflow:auto;padding:2px}
+table{border-collapse:collapse;width:100%}
+th{position:sticky;top:0;z-index:2;text-align:left;font-weight:normal;padding:3px 8px;background:var(--face);box-shadow:inset -1px -1px var(--dk),inset 1px 1px var(--hi);white-space:nowrap}
+td{padding:2px 8px;white-space:nowrap;vertical-align:middle}
+tr.row{cursor:default}
+tr.row.sel td{background:var(--sel);color:#fff}
+tr.row.sel td .dim{color:#cfd8ff}
+tr.grp td{color:var(--dim);padding-top:7px;font-size:12px}
+td.nm{max-width:340px;overflow:hidden;text-overflow:ellipsis}
+.thumb{width:58px;height:33px;background:#1e2430;border:1px solid #000;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#7d8aa3;font-size:10px}
+.thumb video,.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.tag{display:inline-block;padding:0 5px;border:1px solid #5a5a5a;color:#d6d6d6;font-size:11px;margin-right:3px}
+tr.sel .tag{border-color:#9fb3e0;color:#fff}
+.bub{color:var(--note);font-size:12px}
+tr.sel .bub{color:#ffe68a}
+.detail{padding:8px;display:flex;gap:10px;flex-wrap:wrap;max-height:46%;overflow:auto}
+.pv{width:280px;height:158px;flex:none;display:flex;align-items:center;justify-content:center;background:#0e1118}
+.pv video,.pv img{max-width:100%;max-height:100%;display:block}
+.pv audio{width:94%}
+.notes{padding:6px 8px;line-height:1.5;max-height:150px;overflow:auto}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{border:0;padding:1px 8px;cursor:pointer;font-size:12px;background:var(--face);box-shadow:inset -1px -1px var(--dk),inset 1px 1px var(--hi)}
+.chip.on{background:var(--sel);color:#fff;box-shadow:inset 1px 1px var(--dk),inset -1px -1px var(--hi)}
+.side{width:340px;flex:none;padding:5px;display:flex;flex-direction:column;gap:5px;min-height:0}
+.people{padding:5px 8px;display:flex;flex-direction:column;gap:2px}
+.dot{width:9px;height:9px;border:1px solid #000;display:inline-block;flex:none;background:#555}
+.dot.editing{background:#b48cff}.dot.hub,.dot.online{background:#3fbf6a}
+.tabs{display:flex;gap:2px;padding-left:4px}
+.tab{background:var(--face);border:0;padding:3px 12px;cursor:pointer;margin-bottom:-3px;position:relative;box-shadow:inset 1px 1px var(--hi),inset -1px 0 var(--dk),inset 2px 2px var(--lt)}
+.tab.on{padding-top:5px;margin-top:-2px;z-index:2;font-weight:bold}
+.feed{flex:1;min-height:0;overflow:auto;padding:6px 8px;line-height:1.5}
+.feed .day{color:var(--dim);font-size:12px;margin-top:6px}
+.feed .t{color:var(--dim);margin-right:6px}
+.feed .ln{padding:1px 3px}
+.feed .ln.new{background:#1d1b12}
+.feed .q{color:#d8cfa6;padding-left:44px}
+.feed a,.lnk{color:#9db8ff;cursor:pointer;text-decoration:underline;background:none;border:0;padding:0}
+.feed .sub{padding-left:44px;color:var(--dim)}
+.newdiv{display:flex;align-items:center;gap:6px;margin:6px 0 3px;color:var(--note);font-size:12px}
+.newdiv:before,.newdiv:after{content:"";flex:1;height:1px;background:#8a7a3a}
+.status{display:flex;gap:3px;padding:2px}
+.status > div{padding:2px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.modalbg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:50}
+.modalbg.show{display:flex}
+.dlg{width:min(560px,94vw);max-height:92vh;display:flex;flex-direction:column;padding:3px}
+.dlg .body{padding:12px;overflow:auto;display:flex;flex-direction:column;gap:9px}
+.dlg .btns{display:flex;gap:8px;justify-content:flex-end}
+.dlg .btns .btn{min-width:84px}
+fieldset{border:2px groove #4a4a4a;margin:0;padding:6px 10px 9px;min-width:0}
+legend{padding:0 4px}
+label.ck{display:flex;gap:6px;align-items:center}
+.bar{height:16px;padding:2px;display:flex}
+.bar i{display:block;height:100%;background:var(--sel2)}
+.dropzone{position:fixed;inset:10px;border:3px dashed #9db8ff;background:rgba(10,36,106,.35);display:none;align-items:center;justify-content:center;font-size:22px;z-index:60;pointer-events:none}
+.dropzone.show{display:flex}
+.toast{position:fixed;right:14px;bottom:34px;padding:8px 12px;display:none;z-index:70;max-width:380px}
+@media (max-width:980px){.side{width:280px}.cats{width:120px}}
+@media (max-width:760px){.main{flex-wrap:wrap}.side{width:100%;height:420px}.cats{width:100%;display:flex;flex-wrap:wrap}.cat{width:auto}}
+</style></head>
+<body>
+<div class="win out">
+ <div class="titlebar">
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="5" width="14" height="10" fill="#c0c0c0" stroke="#000"/><rect x="1" y="2" width="14" height="3" fill="#fff" stroke="#000"/><path d="M6 8 L11 10 L6 12 Z" fill="#000"/></svg>
+  <span id="title">RotLab</span>
+ </div>
+ <div class="menubar" id="menubar">
+  <div class="mi"><button data-m><u>F</u>ile</button><div class="drop out">
+   <button data-act="add">Add files...<span class="dim">Ctrl+O</span></button>
+   <button data-act="openroot">Open project folder</button>
+   <button data-act="openinbox">Open Inbox folder</button>
+   <button data-act="sortinbox">Sort Inbox now</button><hr>
+   <button data-act="settings">Settings...</button><hr>
+   <button data-act="quit">Quit hub</button></div></div>
+  <div class="mi"><button data-m><u>V</u>iew</button><div class="drop out">
+   <button data-act="tabchat">Chat</button><button data-act="tablog">Log</button><hr>
+   <button data-act="reload">Refresh</button></div></div>
+  <div class="mi"><button data-m><u>S</u>ync</button><div class="drop out">
+   <button data-act="sync">Sync status &amp; linking...</button></div></div>
+  <div class="mi"><button data-m><u>P</u>hone</button><div class="drop out">
+   <button data-act="phone">Upload from phone...</button></div></div>
+  <div class="mi"><button data-m><u>H</u>elp</button><div class="drop out">
+   <button data-act="about">About RotLab</button></div></div>
+ </div>
+ <div class="toolbar">
+  <button class="btn" data-act="add">Add files...</button>
+  <button class="btn" data-act="openroot">Open folder</button>
+  <span style="flex:1"></span>
+  <label for="find">Find:</label><input id="find" class="field" style="width:230px" placeholder="name, tag or note">
+ </div>
+ <div id="banners"></div>
+ <div class="main">
+  <div class="cats in" id="cats"></div>
+  <div class="center">
+   <div class="list in" id="list"></div>
+   <div class="detail out" id="detail" style="display:none"></div>
+  </div>
+  <div class="side out">
+   <div class="people in" id="people"></div>
+   <div class="tabs"><button class="tab on" id="tabChat">Chat</button><button class="tab" id="tabLog">Log</button></div>
+   <div class="feed in" id="feed"></div>
+   <div id="chatIn" style="display:flex;gap:6px"><label for="say" class="dim" style="align-self:center">Say:</label><input id="say" class="field" style="flex:1;min-width:0"><button class="btn" id="sendBtn">Send</button></div>
+   <div id="logIn" style="display:none;gap:6px;align-items:center"><label for="logf" class="dim">Show:</label><select id="logf" class="field" style="flex:1"><option value="all">Everything</option><option value="them">Only the other person</option><option value="mine">Only mine</option><option value="proj">Project saves only</option></select></div>
+  </div>
+ </div>
+ <div class="status">
+  <div class="in" id="stSync" style="flex:1">Sync: starting...</div>
+  <div class="in" id="stInbox">Inbox: 0</div>
+  <div class="in" id="stPhone">Phone: -</div>
+  <div class="in" id="stVer">v-</div>
+ </div>
+</div>
+
+<input type="file" id="filePick" multiple style="display:none">
+<div class="dropzone" id="dropzone">Drop files to add them to the project</div>
+<div class="toast out" id="toast"></div>
+<div class="modalbg" id="modal"><div class="dlg out" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+ <div class="titlebar"><span id="dlgTitle">Dialog</span><button class="btn sm" id="dlgX" aria-label="Close" style="min-height:18px;padding:0 6px">×</button></div>
+ <div class="body" id="dlgBody"></div>
+</div></div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const size=b=>b>=1e9?(b/1e9).toFixed(2)+" GB":b>=1e6?(b/1e6).toFixed(1)+" MB":Math.max(1,Math.ceil(b/1e3))+" KB";
+const dur=s=>{if(!isFinite(s)||!s)return"";s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return(h?h+":"+String(m).padStart(2,"0"):m)+":"+String(x).padStart(2,"0")};
+const tm=ts=>new Date(ts*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+const dayName=ts=>{const d=new Date(ts*1000),t=new Date(),y=new Date(Date.now()-864e5);if(d.toDateString()===t.toDateString())return"Today";if(d.toDateString()===y.toDateString())return"Yesterday";return d.toLocaleDateString([],{weekday:"long",day:"numeric",month:"short"})};
+const ymd=ts=>{const d=new Date(ts*1000);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
+const short=p=>String(p||"").split("/").pop();
+const TAGS=["B-roll","Interview","Music","SFX","Best","Don't use"];
+async function api(url,body){const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||("Error "+r.status));return j}
+function toast(t){const e=$("toast");e.textContent=t;e.style.display="block";clearTimeout(e._t);e._t=setTimeout(()=>e.style.display="none",3800)}
+
+let S=null,cat="Video",q="",lib=null,libGen=-1,libKey="",sel=null,selPath=null,tab="chat",focused=document.hasFocus(),uiHash=null;
+let readAtOpen={chat:null,log:null},durCache={},openGroups=new Set();
+window.addEventListener("focus",()=>{focused=true;tick()});window.addEventListener("blur",()=>focused=false);
+
+/* ---------------- menus + actions ---------------- */
+document.querySelectorAll(".mi > button").forEach(b=>b.addEventListener("click",e=>{const mi=b.parentElement,was=mi.classList.contains("open");closeMenus();if(!was)mi.classList.add("open");e.stopPropagation()}));
+document.querySelectorAll(".mi > button").forEach(b=>b.addEventListener("mouseenter",()=>{if(document.querySelector(".mi.open")&&!b.parentElement.classList.contains("open")){closeMenus();b.parentElement.classList.add("open")}}));
+function closeMenus(){document.querySelectorAll(".mi.open").forEach(m=>m.classList.remove("open"))}
+document.addEventListener("click",closeMenus);
+document.addEventListener("click",e=>{const b=e.target.closest("[data-act]");if(b){closeMenus();act(b.dataset.act)}});
+document.addEventListener("keydown",e=>{if(e.ctrlKey&&e.key.toLowerCase()==="o"){e.preventDefault();act("add")}if(e.key==="Escape"){closeMenus();if($("modal").classList.contains("show")&&!dlgLocked)closeDlg()}});
+async function act(a){try{
+ if(a==="add")$("filePick").click();
+ else if(a==="openroot")await api("/api/reveal",{path:""});
+ else if(a==="openinbox")await api("/api/reveal",{path:"Inbox"});
+ else if(a==="sortinbox"){const r=await api("/api/sort_inbox");toast(r.count?("Sorted "+r.count+" file(s) from the Inbox"):"The Inbox is empty")}
+ else if(a==="settings")settingsDlg(false);
+ else if(a==="quit"){if(confirm("Quit the hub? Sync stops and you'll show as offline until it starts again.")){await api("/api/quit");document.body.innerHTML='<p style="padding:40px;color:#a8a8a8">Hub stopped. You can close this window.</p>'}}
+ else if(a==="tabchat")setTab("chat");else if(a==="tablog")setTab("log");
+ else if(a==="reload")location.reload();
+ else if(a==="sync")syncDlg();else if(a==="phone")phoneDlg();
+ else if(a==="about")aboutDlg();
+}catch(e){toast(e.message)}}
+
+/* ---------------- dialogs ---------------- */
+let dlgLocked=false,dlgOnClose=null;
+function openDlg(title,html,locked){$("dlgTitle").textContent=title;$("dlgBody").innerHTML=html;dlgLocked=!!locked;$("dlgX").style.display=locked?"none":"";$("modal").classList.add("show");const f=$("dlgBody").querySelector("input,textarea,select,button");if(f)f.focus()}
+function closeDlg(){$("modal").classList.remove("show");dlgLocked=false;if(dlgOnClose){const f=dlgOnClose;dlgOnClose=null;f()}}
+$("dlgX").onclick=closeDlg;
+
+function settingsDlg(first){
+ const st=S?S.settings:{};
+ openDlg(first?"Welcome to RotLab":"Settings",`
+  ${first?'<div>Type your name. It is what the other person sees next to your chat, notes and changes.</div>':""}
+  <label for="sName">Your name:</label><input id="sName" class="field" maxlength="40" value="${esc(S&&S.me||"")}">
+  <fieldset><legend>Inbox</legend>
+   <label class="ck"><input type="checkbox" id="sSort" ${st.auto_sort!==false?"checked":""}> Sort files dropped in the Inbox automatically</label>
+   <label class="ck"><input type="checkbox" id="sDate" ${st.date_folders!==false?"checked":""}> Put video and photos in a folder per day (e.g. Video\\2026-11-12)</label></fieldset>
+  ${st.windows?`<label class="ck"><input type="checkbox" id="sStart" ${st.autostart?"checked":""}> Start the hub with Windows</label>`:""}
+  <label class="ck"><input type="checkbox" id="sGh" ${st.github_updates!==false?"checked":""}> Get new versions from GitHub automatically</label>
+  <details><summary class="dim">Advanced</summary><div style="margin-top:6px"><label for="sKey">Syncthing API key (only if you run your own Syncthing and the hub can't find it):</label><input id="sKey" class="field" style="width:100%"></div></details>
+  <div class="dim" style="font-size:12px">Project folder: ${esc(S?S.root:"")}</div>
+  <div class="btns"><button class="btn" id="sOk">OK</button>${first?"":'<button class="btn" id="sCancel">Cancel</button>'}</div>`,first);
+ $("sOk").onclick=async()=>{const b={name:$("sName").value,auto_sort:$("sSort").checked,date_folders:$("sDate").checked,github_updates:$("sGh").checked};if($("sStart"))b.autostart=$("sStart").checked;if($("sKey").value.trim())b.api_key=$("sKey").value.trim();
+  try{await api("/api/setup",b);closeDlg();tick()}catch(e){toast(e.message)}};
+ if($("sCancel"))$("sCancel").onclick=closeDlg;
+ $("sName").onkeydown=e=>{if(e.key==="Enter")$("sOk").click()};
+}
+function aboutDlg(){openDlg("About RotLab",`<div style="display:flex;gap:14px;align-items:center"><svg width="40" height="40" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="5" width="14" height="10" fill="#c0c0c0" stroke="#000"/><rect x="1" y="2" width="14" height="3" fill="#fff" stroke="#000"/><path d="M6 8 L11 10 L6 12 Z" fill="#000"/></svg><div><b>RotLab</b><br>Version ${esc(S.version)}${S.github&&S.github.latest?" · newest on GitHub: "+esc(S.github.latest):""}<br><span class="dim">Shared media library, chat and sync for a VEGAS project.</span></div></div><div class="btns"><button class="btn" id="aChk">Check for updates</button><button class="btn" onclick="closeDlg()">OK</button></div>`);
+ $("aChk").onclick=async()=>{await api("/api/check_updates");toast("Checking GitHub for a new version...");setTimeout(async()=>{await tick();aboutDlg()},5000)}}
+
+function phoneDlg(){
+ const p=S.phone;let h="";
+ if(!p.enabled)h='<div>Uploading from a phone is turned off.</div>';
+ else if(p.error)h=`<div style="color:#ffb4b4">${esc(p.error)}</div>`;
+ else if(!p.ips.length)h='<div>Connect this PC to Wi-Fi or your phone\'s hotspot first.</div>';
+ else h=`<div>On your phone (same Wi-Fi or hotspot), open the browser and go to:</div>
+  <div class="in" style="padding:8px 10px;font-size:20px;font-weight:bold;user-select:all">${p.ips.map(ip=>esc(ip)+":"+p.port).join("<br>")}</div>
+  <div>PIN: <b style="font-size:20px;letter-spacing:3px">${esc(p.pin)}</b></div>
+  <div class="dim">Uploads are sorted into the right folder automatically, with your note and tags. The first time, Windows may ask to allow Python on networks: tick Private and Public.</div>`;
+ openDlg("Upload from phone",h+`<div class="btns">${p.enabled?'<button class="btn" id="pNew">New PIN</button>':""}<button class="btn" id="pTog">${p.enabled?"Turn off":"Turn on"}</button><button class="btn" onclick="closeDlg()">Close</button></div>`);
+ if($("pNew"))$("pNew").onclick=async()=>{if(confirm("Make a new PIN? Phones using the old one will need the new PIN.")){await api("/api/phone",{new_pin:true});await tick();phoneDlg()}};
+ $("pTog").onclick=async()=>{await api("/api/phone",{enabled:!p.enabled});await tick();phoneDlg()};
+}
+
+function syncDlg(){
+ const st=S.syncthing,sy=S.sync||{};let h="";
+ if(sy.installing)h=`<div>${esc(sy.message||"Setting up...")}</div><div class="bar in"><i style="width:${sy.progress||0}%"></i></div>`;
+ else if(!st.ok&&st.mode==="missing")h=`<div>Sync isn't set up on this PC yet. The hub uses Syncthing (free, private, PC to PC) to keep the project folder the same on both computers.</div>${sy.error?`<div style="color:#ffb4b4">${esc(sy.error)}</div>`:""}<div><button class="btn" id="yInstall">Set up sync (about 12 MB, once)</button></div>`;
+ else if(!st.ok)h=`<div style="color:#ffd27a">${esc(st.error)}</div>`;
+ else{const f=st.folder;
+  h=`<div>${st.mode==="builtin"?"Built-in sync":"Using your installed Syncthing"} · ${!f?"project folder not added":(f.needFiles>0?"syncing, "+f.needFiles+" files to go":"project folder up to date")}</div>`;
+  h+=(st.pending||[]).map(p=>`<div class="banner ok" style="margin:0"><span style="flex:1"><b>${esc(p.name)}</b> wants to join this project</span><button class="btn sm" data-acc="${esc(p.id)}" data-nm="${esc(p.name)}">Accept</button><button class="btn sm" data-dis="${esc(p.id)}">Ignore</button></div>`).join("");
+  const devs=(st.devices||[]).filter(d=>d.shared);
+  h+=`<fieldset><legend>Linked PCs</legend>${devs.length?devs.map(d=>`<div style="display:flex;gap:8px;align-items:center"><span class="dot ${d.connected?"online":""}"></span><span style="flex:1">${esc(d.name)}</span><span class="dim">${d.connected?(d.completion!=null&&d.completion<100?"syncing "+Math.floor(d.completion)+"%":"connected, in sync"):"offline"}</span></div>`).join(""):'<div class="dim">Not linked with anyone yet.</div>'}</fieldset>
+   <fieldset><legend>Invite a friend</legend><div class="dim" style="margin-bottom:6px">Make a code and send it to them. They paste it under "Join".</div><div style="display:flex;gap:6px"><input id="yCode" class="field" readonly style="flex:1;min-width:0"><button class="btn" id="yMake">Make code</button></div></fieldset>
+   <fieldset><legend>Join</legend><div style="display:flex;gap:6px"><input id="yJoin" class="field" placeholder="VEGASHUB-..." style="flex:1;min-width:0"><button class="btn" id="yJoinBtn">Join</button></div></fieldset>`}
+ openDlg("Sync",h+'<div class="btns"><button class="btn" onclick="closeDlg()">Close</button></div>');
+ if($("yInstall"))$("yInstall").onclick=async()=>{await api("/api/sync/install");setTimeout(syncDlg,600)};
+ if($("yMake"))$("yMake").onclick=async()=>{try{const r=await api("/api/sync/invite");$("yCode").value=r.code;$("yCode").select();try{await navigator.clipboard.writeText(r.code);toast("Invite code copied")}catch(e){}}catch(e){toast(e.message)}};
+ if($("yJoinBtn"))$("yJoinBtn").onclick=async()=>{try{const r=await api("/api/sync/join",{code:$("yJoin").value});toast("Request sent to "+(r.friend||"your friend")+". They just need to click Accept.");closeDlg()}catch(e){toast(e.message)}};
+ $("dlgBody").querySelectorAll("[data-acc]").forEach(b=>b.onclick=async()=>{await api("/api/sync/accept",{id:b.dataset.acc,name:b.dataset.nm});toast("Linked. Syncing starts in a moment.");await tick();syncDlg()});
+ $("dlgBody").querySelectorAll("[data-dis]").forEach(b=>b.onclick=async()=>{await api("/api/sync/dismiss",{id:b.dataset.dis});await tick();syncDlg()});
+}
+
+async function historyDlg(file){
+ const r=await api("/api/history",{file});
+ openDlg("History: "+short(file),`<div class="dim">Every time ${esc(short(file))} is saved, a copy is kept here. Restoring keeps a copy of the current one first, so nothing is lost.</div>
+  <div class="in" style="max-height:340px;overflow:auto;padding:2px"><table><thead><tr><th>Saved</th><th>By</th><th>Size</th><th></th></tr></thead><tbody>
+  ${r.items.map((h,i)=>`<tr><td>${esc(dayName(h.ts))} ${esc(tm(h.ts))}${i===0?' <span class="dim">(latest)</span>':""}</td><td>${esc(h.user)}</td><td>${size(h.size)}</td><td><button class="btn sm" data-res="${esc(h.id)}" ${i===0?"disabled":""}>Restore</button> <button class="btn sm" data-op="${esc(h.path)}">Open copy</button></td></tr>`).join("")||'<tr><td colspan="4" class="dim">No saves recorded yet. They appear here after the next save.</td></tr>'}
+  </tbody></table></div><div class="btns"><button class="btn" onclick="closeDlg()">Close</button></div>`);
+ $("dlgBody").querySelectorAll("[data-res]").forEach(b=>b.onclick=async()=>{
+  const other=(S.people||[]).find(p=>p.user!==S.me&&p.live==="editing");
+  if(!confirm((other?other.user+" is in VEGAS right now. ":"")+"Restore this version of "+short(file)+"? The current one is kept in History."))return;
+  try{await api("/api/restore",{file,id:b.dataset.res});toast("Restored");historyDlg(file)}catch(e){toast(e.message)}});
+ $("dlgBody").querySelectorAll("[data-op]").forEach(b=>b.onclick=()=>api("/api/open",{path:b.dataset.op}).catch(e=>toast(e.message)));
+}
+
+/* ---------------- uploads (PC) ---------------- */
+let pend=[];
+$("filePick").onchange=()=>{const fs=[...$("filePick").files];$("filePick").value="";if(fs.length)uploadDlg(fs)};
+let dragN=0;
+window.addEventListener("dragenter",e=>{if([...(e.dataTransfer?.types||[])].includes("Files")){dragN++;$("dropzone").classList.add("show")}});
+window.addEventListener("dragleave",()=>{dragN=Math.max(0,dragN-1);if(!dragN)$("dropzone").classList.remove("show")});
+window.addEventListener("dragover",e=>e.preventDefault());
+window.addEventListener("drop",e=>{e.preventDefault();dragN=0;$("dropzone").classList.remove("show");const fs=[...(e.dataTransfer?.files||[])].filter(f=>f.size>0||f.type);if(fs.length)uploadDlg(fs)});
+function uploadDlg(files){
+ pend=files.map(f=>({f,note:""}));
+ const folders=S.settings.folders||{};
+ const opts=['<option value="auto">Automatic (by type'+(S.settings.date_folders?", per day":"")+')</option>']
+  .concat(["Video","Audio","Images","Graphics","Other"].map(c=>`<option value="${esc(folders[c]||c)}">${esc(folders[c]||c)}</option>`));
+ if(sel&&sel.folder&&sel.folder!=="."&&!Object.values(folders).includes(sel.folder))opts.push(`<option value="${esc(sel.folder)}">${esc(sel.folder)} (folder of the selected file)</option>`);
+ const total=files.reduce((a,f)=>a+f.size,0);
+ openDlg("Add "+files.length+" file"+(files.length>1?"s":""),`
+  <div class="in" style="max-height:150px;overflow:auto;padding:3px 6px" id="uList">${pend.map((p,i)=>`<div style="display:flex;gap:8px;align-items:center;padding:1px 0"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.f.name)}<span class="bub" id="un${i}"></span></span><span class="dim">${size(p.f.size)}</span><button class="lnk" data-fn="${i}">note</button></div>`).join("")}</div>
+  <div class="dim" style="font-size:12px">${size(total)} in total</div>
+  <label for="uNote">Note for these files <span class="dim">(optional)</span>:</label><textarea id="uNote" class="field" rows="3" style="resize:vertical"></textarea>
+  <fieldset><legend>Tags</legend><div class="chips" id="uTags">${TAGS.map(t=>`<button class="chip" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div></fieldset>
+  <div style="display:flex;gap:8px;align-items:center"><label for="uDest">Put in:</label><select id="uDest" class="field" style="flex:1">${opts.join("")}</select></div>
+  <div id="uProg" style="display:none"><div id="uProgT" class="dim"></div><div class="bar in"><i id="uBar" style="width:0"></i></div></div>
+  <div class="btns"><button class="btn" id="uOk">OK</button><button class="btn" id="uSkip">Skip note</button><button class="btn" id="uCancel">Cancel</button></div>`);
+ $("uTags").querySelectorAll(".chip").forEach(b=>b.onclick=()=>b.classList.toggle("on"));
+ $("uList").querySelectorAll("[data-fn]").forEach(b=>b.onclick=()=>{const i=+b.dataset.fn,v=prompt("Note for "+pend[i].f.name+":",pend[i].note);if(v!==null){pend[i].note=v.trim();$("un"+i).textContent=pend[i].note?"  (own note)":""}});
+ $("uCancel").onclick=closeDlg;
+ $("uSkip").onclick=()=>{$("uNote").value="";$("uOk").click()};
+ $("uOk").onclick=()=>runUpload($("uNote").value,[...$("uTags").querySelectorAll(".chip.on")].map(b=>b.dataset.tag),$("uDest").value);
+}
+async function runUpload(note,tags,dest){
+ ["uOk","uSkip","uCancel"].forEach(i=>$(i).disabled=true);dlgLocked=true;$("dlgX").style.display="none";$("uProg").style.display="block";
+ const batch=Math.random().toString(36).slice(2,12),total=pend.reduce((a,p)=>a+p.f.size,0);let done=0,ok=0,fail=[];
+ for(let i=0;i<pend.length;i++){const p=pend[i];$("uProgT").textContent=`Adding ${i+1} of ${pend.length}: ${p.f.name}`;
+  try{await new Promise((res,rej)=>{const x=new XMLHttpRequest();x.open("POST",`/api/upload?name=${encodeURIComponent(p.f.name)}&dest=${encodeURIComponent(dest)}&lm=${p.f.lastModified||""}&batch=${batch}&fnote=${encodeURIComponent(p.note||"")}`);
+   x.upload.onprogress=e=>{$("uBar").style.width=((done+e.loaded)/Math.max(total,1)*100)+"%"};
+   x.onload=()=>x.status===200?res():rej(new Error((JSON.parse(x.responseText||"{}").error)||x.status));x.onerror=()=>rej(new Error("connection lost"));x.send(p.f)});ok++}
+  catch(e){fail.push(p.f.name+": "+e.message)}
+  done+=p.f.size;$("uBar").style.width=(done/Math.max(total,1)*100)+"%"}
+ try{await api("/api/upload_done",{batch,note,tags})}catch(e){}
+ dlgLocked=false;closeDlg();libGen=-1;tick();
+ if(fail.length)alert("Some files couldn't be added:\n\n"+fail.join("\n"));else toast("Added "+ok+" file"+(ok>1?"s":""));
+}
+
+/* ---------------- library ---------------- */
+const CAT_LABEL={Video:"Video",Audio:"Audio",Images:"Images",Graphics:"Graphics",Renders:"Renders",Project:"Project",Other:"Other"};
+function renderCats(){
+ const c=(lib&&lib.counts)||{};let h="";
+ for(const k of ["Video","Audio","Images","Graphics","Renders"])h+=catBtn(k,c[k]);
+ h+='<div class="sep"></div>'+catBtn("Project",c.Project)+(c.Other?catBtn("Other",c.Other):"");
+ h+=`<button class="cat" data-act="openinbox" title="Drop files in this folder and they get sorted"><span>Inbox</span><span class="n" style="color:${S&&S.inbox?"#e8d27a":""}">${S?S.inbox:0}</span></button>`;
+ $("cats").innerHTML=h;
+ $("cats").querySelectorAll("[data-cat]").forEach(b=>b.onclick=()=>{cat=b.dataset.cat;q="";$("find").value="";sel=null;selPath=null;$("detail").style.display="none";loadLib(true);api("/api/view",{view:cat}).catch(()=>{})});
+}
+function catBtn(k,n){return `<button class="cat ${!q&&cat===k?"on":""}" data-cat="${k}"><span>${CAT_LABEL[k]}</span><span class="n">${n||0}</span></button>`}
+let findT=null;$("find").oninput=()=>{clearTimeout(findT);findT=setTimeout(()=>{q=$("find").value.trim();sel=null;selPath=null;$("detail").style.display="none";loadLib(true)},250)};
+async function loadLib(force){
+ const key=cat+"|"+q;if(!force&&lib&&libGen===S.lib_gen&&libKey===key)return;
+ try{lib=await api("/api/library",{cat,q});libGen=lib.gen;libKey=key;renderCats();renderList();if(sel)selectFile(sel.path,true)}catch(e){}
+}
+function renderList(){
+ const items=lib.items;let h="";
+ if(!items.length){$("list").innerHTML=`<div class="dim" style="padding:14px">${q?"Nothing matches “"+esc(q)+"”.":"No "+esc(CAT_LABEL[cat]||cat).toLowerCase()+" files yet. Use Add files... or drop them on this window."}</div>`;return}
+ const media=["Video","Renders","Audio"].includes(cat)||q;
+ h+=`<table><thead><tr><th style="width:1%"></th><th>Name</th>${media?"<th>Length</th>":""}<th>Tags</th><th>Added by</th><th>Notes</th><th>Folder</th></tr></thead><tbody>`;
+ let lastDay="";
+ for(const it of items){const d=ymd(it.mtime);if(d!==lastDay){h+=`<tr class="grp"><td colspan="7">${esc(dayName(it.mtime))}</td></tr>`;lastDay=d}
+  h+=`<tr class="row ${selPath===it.path?"sel":""}" data-p="${esc(it.path)}"><td>${thumb(it)}</td><td class="nm" title="${esc(it.path)}">${esc(it.name)}</td>${media?`<td data-dur="${esc(it.path)}">${esc(durCache[it.path]||"")}</td>`:""}<td>${(it.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</td><td>${esc(it.by===S.me?"You":(it.by||""))}</td><td>${it.notes?`<span class="bub">${it.notes} note${it.notes>1?"s":""}</span>`:""}</td><td class="dim">${esc(it.folder==="."?"(top)":it.folder)}</td></tr>`}
+ h+="</tbody></table>";$("list").innerHTML=h;
+ $("list").querySelectorAll("tr.row").forEach(r=>{r.onclick=()=>selectFile(r.dataset.p);r.ondblclick=()=>openItem(r.dataset.p)});
+ lazyThumbs();
+}
+function thumb(it){
+ const src="/media?path="+encodeURIComponent(it.path);
+ if(it.cat==="Video"||it.cat==="Renders")return `<div class="thumb" data-v="${esc(src)}" data-p="${esc(it.path)}">&#9654;</div>`;
+ if((it.cat==="Images"||it.cat==="Graphics")&&/\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(it.name))return `<div class="thumb" data-i="${esc(src)}"></div>`;
+ if(it.cat==="Audio")return `<div class="thumb" data-a="${esc(src)}" data-p="${esc(it.path)}">&#9835;</div>`;
+ if(it.cat==="Project")return `<div class="thumb" style="color:#b48cff">VEG</div>`;
+ return `<div class="thumb">${esc((it.name.split(".").pop()||"").toUpperCase().slice(0,4))}</div>`;
+}
+const io_=new IntersectionObserver(es=>{for(const e of es){if(!e.isIntersecting)continue;const t=e.target;io_.unobserve(t);
+ if(t.dataset.v){const v=document.createElement("video");v.muted=true;v.preload="metadata";v.src=t.dataset.v+"#t=0.8";v.onloadedmetadata=()=>setDur(t.dataset.p,v.duration);v.onloadeddata=()=>{t.textContent="";t.appendChild(v)};}
+ else if(t.dataset.i){const im=new Image();im.loading="lazy";im.onload=()=>{t.textContent="";t.appendChild(im)};im.src=t.dataset.i}
+ else if(t.dataset.a){const a=new Audio();a.preload="metadata";a.onloadedmetadata=()=>setDur(t.dataset.p,a.duration);a.src=t.dataset.a}}},{root:$("list"),rootMargin:"200px"});
+function lazyThumbs(){$("list").querySelectorAll(".thumb[data-v],.thumb[data-i],.thumb[data-a]").forEach(t=>io_.observe(t))}
+function setDur(p,s){const v=dur(s);if(!v)return;durCache[p]=v;const td=$("list").querySelector(`td[data-dur="${CSS.escape(p)}"]`);if(td)td.textContent=v}
+async function openItem(p){try{await api("/api/open",{path:p})}catch(e){toast(e.message)}}
+async function selectFile(path,keepScroll){
+ selPath=path;
+ $("list").querySelectorAll("tr.row").forEach(r=>r.classList.toggle("sel",r.dataset.p===path));
+ let d;try{d=await api("/api/file",{path})}catch(e){$("detail").style.display="none";sel=null;selPath=null;return}
+ const prevNote=$("dNote")?$("dNote").value:"";
+ if(keepScroll&&sel&&sel.path===path&&sel._sig===JSON.stringify([d.notes.length,d.tags,d.history_count]))return;
+ sel=d;sel._sig=JSON.stringify([d.notes.length,d.tags,d.history_count]);sel.folder=path.includes("/")?path.slice(0,path.lastIndexOf("/")):".";
+ const src="/media?path="+encodeURIComponent(path);let pv="";
+ if(d.cat==="Video"||d.cat==="Renders")pv=`<video src="${src}" controls preload="metadata"></video>`;
+ else if(d.cat==="Audio")pv=`<audio src="${src}" controls preload="metadata"></audio>`;
+ else if(/\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(d.name))pv=`<img src="${src}" alt="">`;
+ else pv=`<div class="dim" style="text-align:center">${d.cat==="Project"?"VEGAS project":"No preview"}</div>`;
+ const veg=d.cat==="Project";
+ $("detail").innerHTML=`<div class="pv in">${pv}</div>
+  <div style="flex:1;min-width:260px;display:flex;flex-direction:column;gap:6px">
+   <div><b>${esc(d.name)}</b> <span class="dim">· ${size(d.size)} · ${esc(path.includes("/")?path.slice(0,path.lastIndexOf("/")):"(top folder)")}${d.by?" · added by "+esc(d.by===S.me?"you":d.by):""}</span></div>
+   <div style="display:flex;gap:6px;flex-wrap:wrap">${veg?'<button class="btn sm" id="dOpen">Open in VEGAS</button><button class="btn sm" id="dHist">History ('+d.history_count+')...</button>':'<button class="btn sm" id="dOpen">Open</button>'}<button class="btn sm" id="dShow">Show in folder</button></div>
+   <div class="chips" id="dTags">${TAGS.concat((d.tags||[]).filter(t=>!TAGS.includes(t))).map(t=>`<button class="chip ${d.tags.includes(t)?"on":""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}<button class="chip" id="dTagAdd">+ tag</button></div>
+   <div class="notes in" id="dNotes">${d.notes.length?d.notes.map(n=>`<div><b>${esc(n.user===S.me?"You":n.user)}</b>${n.via==="upload"?' <span class="dim">(upload note)</span>':""}: ${esc(n.text)} <span class="dim" style="font-size:11px">${esc(dayName(n.ts))} ${esc(tm(n.ts))}</span></div>`).join(""):'<span class="dim">No notes yet.</span>'}</div>
+   <div style="display:flex;gap:6px"><label for="dNote" class="dim" style="align-self:center">Note:</label><input id="dNote" class="field" style="flex:1;min-width:0"><button class="btn" id="dNoteBtn">Add</button></div>
+  </div>`;
+ $("detail").style.display="flex";$("dNote").value=prevNote;
+ $("dOpen").onclick=()=>openItem(path);$("dShow").onclick=()=>api("/api/reveal",{path}).catch(e=>toast(e.message));
+ if($("dHist"))$("dHist").onclick=()=>historyDlg(path).catch(e=>toast(e.message));
+ const tagsNow=()=>[...$("dTags").querySelectorAll(".chip.on")].map(b=>b.dataset.tag);
+ $("dTags").querySelectorAll("[data-tag]").forEach(b=>b.onclick=async()=>{b.classList.toggle("on");await api("/api/tags",{file:path,tags:tagsNow()});sel._sig="";libGen=-1;tick()});
+ $("dTagAdd").onclick=async()=>{const t=prompt("New tag:");if(t&&t.trim()){await api("/api/tags",{file:path,tags:tagsNow().concat([t.trim()])});sel._sig="";libGen=-1;tick()}};
+ const addNote=async()=>{const t=$("dNote").value.trim();if(!t)return;$("dNote").value="";await api("/api/note",{file:path,text:t});sel._sig="";libGen=-1;tick()};
+ $("dNoteBtn").onclick=addNote;$("dNote").onkeydown=e=>{if(e.key==="Enter")addNote()};
+}
+function gotoFile(p){const it=(lib&&lib.items||[]).find(x=>x.path===p);cat=categoryOf(p);q="";$("find").value="";loadLib(true).then(()=>selectFile(p).then(()=>{const r=$("list").querySelector(`tr[data-p="${CSS.escape(p)}"]`);if(r)r.scrollIntoView({block:"center"})}))}
+function categoryOf(p){const e=(p.split(".").pop()||"").toLowerCase(),l=p.toLowerCase();
+ if(["mp4","mov","m4v","mkv","avi","mts","m2ts","webm","3gp","wmv","mxf","mpg","mpeg"].includes(e))return /render|export|preview/.test(l)?"Renders":"Video";
+ if(["mp3","wav","m4a","aac","flac","ogg","wma","aif","aiff","opus"].includes(e))return"Audio";
+ if(["jpg","jpeg","heic","heif","dng","raw","cr2","cr3","nef","arw","tif","tiff","bmp"].includes(e))return"Images";
+ if(["png","gif","webp","svg","psd","ai","eps","ttf","otf"].includes(e))return"Graphics";
+ if(e==="veg")return"Project";return"Other"}
+
+/* ---------------- people, chat, log ---------------- */
+function renderPeople(){
+ const ppl=(S.people||[]).slice().sort((a,b)=>(a.user===S.me)-(b.user===S.me));
+ if(!ppl.some(p=>p.user===S.me))ppl.push({user:S.me,live:"hub",status:{text:"here"}});
+ $("people").innerHTML=ppl.map(p=>`<div style="display:flex;gap:8px;align-items:center"><span class="dot ${p.live}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(p.user===S.me?"You":p.user)}</b>${p.live==="offline"?'<span class="dim">: offline'+(p.ts?", seen "+esc(dayName(p.ts).toLowerCase())+" "+esc(tm(p.ts)):"")+"</span>":": "+esc(p.status.text||p.live)}</span></div>`).join("");
+}
+function setTab(t){tab=t;$("tabChat").classList.toggle("on",t==="chat");$("tabLog").classList.toggle("on",t==="log");$("chatIn").style.display=t==="chat"?"flex":"none";$("logIn").style.display=t==="log"?"flex":"none";readAtOpen[t]=null;if(S&&S.configured)renderFeed(true)}
+$("tabChat").onclick=()=>setTab("chat");$("tabLog").onclick=()=>setTab("log");$("logf").onchange=()=>renderFeed(true);
+function who(u){return u===S.me?"You":u}
+function feedLine(e,isNew){return `<div class="ln ${isNew?"new":""}"><span class="t">${esc(tm(e.ts))}</span>${e._h}</div>`}
+function logHtml(e){
+ const u=`<b>${esc(who(e.user))}</b>`,files=e.files||[],n=e.count||files.length,fld=e.folder&&e.folder!=="."?e.folder:"the top folder";
+ const many=(verb,prep)=>{if(n===1)return `${u} ${verb} <a data-go="${esc(files[0])}">${esc(short(files[0]))}</a> ${prep} ${esc(fld)}`;
+  const open=openGroups.has(e.id);return `${u} ${verb} ${n} files ${prep} ${esc(fld)} <a data-grp="${esc(e.id)}">[${open?"-":"+"}]</a>`+(open?`<div class="sub">${files.map(f=>`<div><a data-go="${esc(f)}">${esc(short(f))}</a></div>`).join("")}</div>`:"")};
+ switch(e.type){
+  case "files":
+   if(e.action==="added")return many("added","to");
+   if(e.action==="modified")return many("changed","in");
+   if(e.action==="restored")return `${u} restored <a data-go="${esc(files[0])}">${esc(short(files[0]))}</a>`;
+   if(e.action==="deleted"){if(n===1)return `${u} deleted ${esc(short(files[0]))} from ${esc(fld)}${e.user!==S.me?` <a data-undel="${esc(files[0])}">Restore</a>`:""}`;
+    const open=openGroups.has(e.id);return `${u} deleted ${n} files from ${esc(fld)} <a data-grp="${esc(e.id)}">[${open?"-":"+"}]</a>`+(open?`<div class="sub">${files.map(f=>`<div>${esc(short(f))}${e.user!==S.me?` <a data-undel="${esc(f)}">Restore</a>`:""}</div>`).join("")}</div>`:"")}
+   if(e.action==="renamed"){const ps=e.pairs||[];if(ps.length===1)return `${u} ${short(ps[0][0])===short(ps[0][1])?"moved":"renamed"} ${esc(short(ps[0][0]))} → <a data-go="${esc(ps[0][1])}">${esc(ps[0][1])}</a>`;return `${u} renamed/moved ${ps.length} files`}
+   return `${u} ${esc(e.action)} ${n} files`;
+  case "saved":return `${u} saved <a data-go="${esc(e.file)}">${esc(short(e.file))}</a> <a data-hist="${esc(e.file)}">(history)</a>`;
+  case "upload":return `${u} uploaded ${e.count} file${e.count>1?"s":""}${e.via==="phone"?" from phone":""} → ${esc(e.folder)} <span class="dim">(${size(e.bytes||0)})</span> <a data-grp="${esc(e.id)}">[${openGroups.has(e.id)?"-":"+"}]</a>`+(e.note?`<div class="q">“${esc(e.note)}”</div>`:"")+(openGroups.has(e.id)?`<div class="sub">${files.map(f=>`<div><a data-go="${esc(f)}">${esc(short(f))}</a></div>`).join("")}</div>`:"");
+  case "sorted":return `${u} sorted ${e.count} file${e.count>1?"s":""} from the Inbox → ${esc(e.folder)} <a data-grp="${esc(e.id)}">[${openGroups.has(e.id)?"-":"+"}]</a>`+(openGroups.has(e.id)?`<div class="sub">${files.map(f=>`<div><a data-go="${esc(f)}">${esc(short(f))}</a></div>`).join("")}</div>`:"");
+  case "note":return `${u} noted on <a data-go="${esc(e.file)}">${esc(short(e.file))}</a>: “${esc(e.text)}”`;
+  case "restore":return `${u} restored ${esc(short(e.file))} to an earlier save <a data-hist="${esc(e.file)}">(history)</a>`;
+  case "joined":return `${u} started using the hub`;
+  case "sync_join":return `${u} asked to join ${e.friend?esc(e.friend)+"'s":"a"} project`;
+  case "sync_accept":return `${u} linked with ${esc(e.device)}`;
+  case "updated":return `${u}'s hub updated to v${esc(e.version)}`;
+ }return `${u} ${esc(e.type)}`;
+}
+function renderFeed(scrollEnd){
+ const box=$("feed"),atEnd=box.scrollHeight-box.scrollTop-box.clientHeight<30;
+ const rd=S.read||{};if(readAtOpen[tab]===null)readAtOpen[tab]=rd[tab]||0;const since=readAtOpen[tab];
+ let rows;
+ if(tab==="chat"){rows=S.chat.map(m=>Object.assign({},m,{_h:`<b>${esc(who(m.user))}</b>: ${esc(m.text)}`}))
+  .concat(S.log.filter(e=>e.type==="note").map(e=>Object.assign({},e,{_h:`<span class="dim" style="font-style:italic">${esc(who(e.user))} noted on <a data-go="${esc(e.file)}">${esc(short(e.file))}</a>: “${esc(e.text)}”</span>`})))
+  .sort((a,b)=>a.ts-b.ts)}
+ else{const f=$("logf").value;rows=S.log.filter(e=>f==="all"||(f==="mine"&&e.user===S.me)||(f==="them"&&e.user!==S.me)||(f==="proj"&&(e.type==="saved"||e.type==="restore"))).map(e=>Object.assign({},e,{_h:logHtml(e)}))}
+ let h="",lastDay="",div=false;
+ for(const e of rows){const d=dayName(e.ts);if(d!==lastDay){h+=`<div class="day">${esc(d)}</div>`;lastDay=d}
+  const isNew=e.user!==S.me&&e.ts>since;if(isNew&&!div){h+='<div class="newdiv">new since you were last here</div>';div=true}
+  h+=feedLine(e,isNew)}
+ if(!rows.length)h=`<div class="dim">${tab==="chat"?"No messages yet. Say hi.":"Nothing has changed yet. Added, changed and deleted files show up here."}</div>`;
+ if(box._last!==h){box.innerHTML=h;box._last=h;if(scrollEnd||atEnd)box.scrollTop=box.scrollHeight}
+}
+$("feed").addEventListener("click",async e=>{const a=e.target.closest("a");if(!a)return;
+ if(a.dataset.go)gotoFile(a.dataset.go);
+ else if(a.dataset.grp){openGroups.has(a.dataset.grp)?openGroups.delete(a.dataset.grp):openGroups.add(a.dataset.grp);$("feed")._last="";renderFeed(false)}
+ else if(a.dataset.hist)historyDlg(a.dataset.hist).catch(err=>toast(err.message));
+ else if(a.dataset.undel){try{await api("/api/restore_deleted",{file:a.dataset.undel});toast("Restored "+short(a.dataset.undel))}catch(err){toast(err.message)}}});
+async function sendChat(){const t=$("say").value.trim();if(!t)return;$("say").value="";await api("/api/chat",{text:t}).catch(e=>toast(e.message));readAtOpen.chat=Date.now()/1000;tick()}
+$("sendBtn").onclick=sendChat;$("say").onkeydown=e=>{if(e.key==="Enter")sendChat()};
+
+/* ---------------- banners, status, notifications ---------------- */
+function renderBanners(){let h="";
+ if(S.clash)h+=`<div class="banner warn">&#9888; <b>${esc(S.clash.user)}</b> also has <b>${esc(S.clash.project)}</b> open. Only one of you should save it, or one of you will overwrite the other's changes.</div>`;
+ for(const p of (S.syncthing.pending||[]))h+=`<div class="banner ok"><span style="flex:1"><b>${esc(p.name)}</b> wants to join this project</span><button class="btn sm" data-acc="${esc(p.id)}" data-nm="${esc(p.name)}">Accept</button><button class="btn sm" data-dis="${esc(p.id)}">Ignore</button></div>`;
+ if(S.update&&S.update.pending)h+=`<div class="banner info"><span style="flex:1">A new version (v${esc(S.update.version)}) arrived through sync.</span><button class="btn sm" id="bRestart">Restart now</button></div>`;
+ if(!S.syncthing.ok&&S.syncthing.mode==="missing")h+=`<div class="banner info"><span style="flex:1">File sync isn't set up on this PC yet.</span><button class="btn sm" data-act="sync">Set up...</button></div>`;
+ if($("banners")._last!==h){$("banners").innerHTML=h;$("banners")._last=h;
+  $("banners").querySelectorAll("[data-acc]").forEach(b=>b.onclick=async()=>{await api("/api/sync/accept",{id:b.dataset.acc,name:b.dataset.nm});toast("Linked. Syncing starts in a moment.");tick()});
+  $("banners").querySelectorAll("[data-dis]").forEach(b=>b.onclick=async()=>{await api("/api/sync/dismiss",{id:b.dataset.dis});tick()});
+  if($("bRestart"))$("bRestart").onclick=async()=>{await api("/api/restart",{window:true}).catch(()=>{});document.body.innerHTML='<p style="padding:40px;color:#a8a8a8">Updating... the hub reopens in a few seconds.</p>';setTimeout(()=>window.close(),1500)}}
+}
+function renderStatus(){
+ const st=S.syncthing,sy=S.sync||{};let t;
+ if(sy.installing)t="Sync: setting up... "+(sy.progress||0)+"%";
+ else if(!st.ok)t="Sync: "+(st.mode==="missing"?"not set up":st.error);
+ else{const f=st.folder,linked=(st.devices||[]).filter(d=>d.shared),con=linked.filter(d=>d.connected);
+  t=!linked.length?"Sync: not linked with anyone yet":(con.length?"Synced with "+con.map(d=>d.name).join(", "):"Other PC offline")+(f?(f.needFiles>0?" · syncing "+f.needFiles+" files":" · up to date"):"")}
+ const up=S.upload;if(up&&up.total)t+=` · receiving ${up.name} ${Math.floor(up.got/up.total*100)}%`;
+ $("stSync").textContent=t;$("stInbox").textContent="Inbox: "+(S.inbox?S.inbox+" waiting":"empty");
+ const p=S.phone;$("stPhone").textContent=p.enabled&&p.ips.length?"Phone: "+p.ips[0]+":"+p.port+" · PIN "+p.pin:"Phone: off";
+ $("stVer").textContent="v"+S.version;
+ $("tabChat").textContent="Chat"+(S.unread.chat&&!(tab==="chat"&&focused)?" ("+S.unread.chat+")":"");
+ $("tabLog").textContent="Log"+(S.unread.log&&!(tab==="log"&&focused)?" ("+S.unread.log+" new)":"");
+ $("title").textContent="RotLab: "+S.root;
+ document.title=(S.unread.chat?"("+S.unread.chat+") ":"")+"RotLab";
+}
+let lastSeenTs=null;
+function notify(){
+ const evs=S.chat.concat(S.log).filter(e=>e.user!==S.me);const newest=evs.reduce((a,e)=>Math.max(a,e.ts),0);
+ if(lastSeenTs!==null&&!focused){const fresh=evs.filter(e=>e.ts>lastSeenTs&&(e.text||e.type==="saved"||e.type==="upload"));
+  for(const e of fresh.slice(-3)){const body=e.text?(e.user+": "+e.text):(e.user+(e.type==="saved"?" saved "+short(e.file):" uploaded "+e.count+" files"));
+   if(window.Notification&&Notification.permission==="granted")new Notification("RotLab",{body})}}
+ lastSeenTs=Math.max(lastSeenTs||0,newest);
+}
+
+/* ---------------- main loop ---------------- */
+let marking=false;
+async function tick(){
+ try{const r=await fetch("/api/state?focused="+(focused&&!document.hidden?1:0));S=await r.json()}catch(e){$("stSync").textContent="Hub not responding...";return}
+ if(uiHash===null)uiHash=S.ui;else if(S.ui&&S.ui!==uiHash&&!$("modal").classList.contains("show")){location.reload();return}
+ if(!S.configured){if(!$("modal").classList.contains("show"))settingsDlg(true);return}
+ renderBanners();renderPeople();renderStatus();renderFeed(false);notify();
+ if(!lib||S.lib_gen!==libGen)loadLib(true);else renderCats();
+ if(focused&&!document.hidden&&S.unread[tab]&&!marking){marking=true;api("/api/read",{which:tab}).finally(()=>marking=false)}
+}
+setTab("chat");
+(async()=>{await tick();const h=decodeURIComponent(location.hash.slice(1));if(h==="log")setTab("log");else if(h.startsWith("file="))gotoFile(h.slice(5))})();
+setInterval(tick,2500);
+if(window.Notification&&Notification.permission==="default")setTimeout(()=>{try{Notification.requestPermission()}catch(e){}},4000);
+</script>
+</body></html>
