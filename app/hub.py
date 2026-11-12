@@ -39,7 +39,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "3.0"
+HUB_VERSION = "3.1"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -1415,9 +1415,9 @@ def ws_state():
         elif k == "link_new" and e.get("pid") in projects:
             links[e["lid"]] = {"lid": e["lid"], "pid": e["pid"], "src": e.get("src"), "cat": e.get("cat", "Any"),
                                "file": e.get("file"), "target": e.get("target"), "version": e.get("version"),
-                               "vmtime": e.get("vmtime"), "by": u, "ts": ts, "deleted": False}
+                               "vmtime": e.get("vmtime"), "by": u, "ts": ts, "deleted": False, "pinned": False}
         elif k == "link_set" and e.get("lid") in links:
-            for f in ("version", "vmtime", "deleted"):
+            for f in ("version", "vmtime", "deleted", "pinned"):
                 if f in e:
                     links[e["lid"]][f] = e[f]
     # numbers per project (#1, #2...) in creation order
@@ -1502,7 +1502,15 @@ def outputs_of(pid, cat="Any"):
 
 
 def link_status(l):
-    vers = outputs_of(l["src"], l["cat"]) if not l.get("file") else []
+    if l.get("file"):
+        f = l["file"]
+        try:
+            m = os.path.getmtime(os.path.join(ROOT, f))
+            vers = [{"path": f, "mtime": m, "size": os.path.getsize(os.path.join(ROOT, f))}]
+        except OSError:
+            vers = []
+    else:
+        vers = outputs_of(l["src"], l["cat"])
     newest = vers[0] if vers else None
     pending = bool(newest and (newest["path"] != l.get("version") or int(newest["mtime"]) != int(l.get("vmtime") or 0)))
     return {"versions": [{"path": v["path"], "mtime": v["mtime"], "size": v["size"]} for v in vers[:20]],
@@ -1510,7 +1518,7 @@ def link_status(l):
             "has_target": os.path.exists(os.path.join(ROOT, l["target"])) if l.get("target") else False}
 
 
-def link_apply(lid, version_path):
+def link_apply(lid, version_path, auto=False, initial=False):
     l = ws_state()["links"].get(lid)
     if not l:
         raise ValueError("unknown link")
@@ -1525,16 +1533,18 @@ def link_apply(lid, version_path):
     shutil.copyfile(src, tmp)
     os.replace(tmp, target)
     mark_written(l["target"])
-    ws_add("link_set", lid=lid, version=version_path, vmtime=os.path.getmtime(src))
+    ws_add("link_set", lid=lid, version=version_path, vmtime=os.path.getmtime(src), auto=auto, initial=initial)
     with LIB_LOCK:
         LIB["sig"] = None
 
 
 def new_link(pid, src_pid, cat="Any", file=None):
     st_ = ws_state()
-    if pid not in st_["projects"] or src_pid not in st_["projects"] or pid == src_pid:
+    if file:
+        src_pid = project_of_path(file)
+    if pid not in st_["projects"] or pid == src_pid or (src_pid not in st_["projects"] and src_pid != SHARED):
         raise ValueError("Pick two different projects")
-    src = st_["projects"][src_pid]
+    src = st_["projects"].get(src_pid) or {"name": "Shared"}
     if file:
         safe_path(file)
         ext = os.path.splitext(file)[1]
@@ -1547,11 +1557,64 @@ def new_link(pid, src_pid, cat="Any", file=None):
         ext = os.path.splitext(vers[0]["path"])[1]
         version = vers[0]["path"]
     nm = re.sub(r'[<>:"/\\|?*]', "", src["name"]).strip() or "linked"
-    target = rel(os.path.join(proj_dir(pid), "Linked", nm + ext))
+    if file:
+        nm = os.path.splitext(os.path.basename(file))[0]
+    for l_ in st_["links"].values():
+        if l_["pid"] == pid and ((file and l_.get("file") == file) or (not file and not l_.get("file") and l_["src"] == src_pid and l_["cat"] == cat)):
+            raise ValueError("That's already linked into this project")
+    target = rel(unique_path(os.path.join(proj_dir(pid), "Linked"), nm + ext)) if file else rel(os.path.join(proj_dir(pid), "Linked", nm + ext))
     lid = uuid.uuid4().hex[:10]
     ws_add("link_new", lid=lid, pid=pid, src=src_pid, cat=cat, file=file, target=target)
-    link_apply(lid, version)
+    link_apply(lid, version, initial=True)
     return lid
+
+
+def busy_in_project(pid):
+    """True when someone has a project file from this project open (so we don't swap files under them)."""
+    try:
+        folder = os.path.join(ROOT, ws_state()["projects"][pid]["folder"])
+    except KeyError:
+        return False
+    names = set()
+    mine = (STATE.get("vegas") or {}).get("project")
+    if mine:
+        names.add(mine.lower())
+    for p in read_presence():
+        if p["user"] != me() and p["live"] == "editing" and p["status"].get("project"):
+            names.add(p["status"]["project"].lower())
+    if not names:
+        return False
+    for dp, dn, fn in os.walk(folder):
+        dn[:] = [d for d in dn if not d.startswith((".", "~"))]
+        for f in fn:
+            if f.lower() in names or os.path.splitext(f)[0].lower() in names:
+                return True
+    return False
+
+
+AUTOLINK_WAIT = {}
+
+
+def auto_update_links():
+    """Linked files follow the newest version unless pinned. Only one PC does it: whoever made the link,
+    or the other person if the maker has been offline for 10 minutes."""
+    if not me():
+        return
+    ppl = {p["user"]: p for p in read_presence()}
+    for l in ws_view()["links"]:
+        if not l["update"] or l.get("pinned") or not l["newest"]:
+            continue
+        maker = ppl.get(l["by"])
+        if l["by"] != me() and maker and (maker["live"] != "offline" or now() - maker.get("ts", 0) < 600):
+            continue
+        if busy_in_project(l["pid"]):
+            AUTOLINK_WAIT[l["lid"]] = True
+            continue
+        AUTOLINK_WAIT.pop(l["lid"], None)
+        try:
+            link_apply(l["lid"], l["newest"], auto=True)
+        except Exception as e:
+            print("auto link update:", repr(e))
 
 
 # ---------------------------------------------------------------- requests
@@ -1620,6 +1683,7 @@ def ws_view():
     for l in st_["links"].values():
         d = dict(l)
         d.update(link_status(l))
+        d["waiting"] = bool(AUTOLINK_WAIT.get(l["lid"]))
         links.append(d)
     comments = sorted(st_["comments"].values(), key=lambda c: c["ts"])
     return {"projects": projects, "parts": parts, "requests": reqs, "links": links, "comments": comments,
@@ -1719,7 +1783,10 @@ def ws_post(path, body):
         lid = new_link(b.get("pid"), b.get("src"), b.get("cat") or "Any", b.get("file") or None)
         return 200, {"ok": True, "lid": lid}
     if path == "/api/ws/link_apply":
-        link_apply(b.get("lid"), b.get("version"))
+        if b.get("version"):
+            link_apply(b.get("lid"), b.get("version"))
+        if "pinned" in b:
+            ws_add("link_set", lid=b.get("lid"), pinned=bool(b["pinned"]))
         return 200, {"ok": True}
     if path == "/api/ws/link_del":
         ws_add("link_set", lid=b.get("lid"), deleted=True)
@@ -1805,6 +1872,24 @@ def _vtuple(v):
     return tuple(int(x) for x in re.findall(r"\d+", str(v))[:4])
 
 
+def backup_app():
+    """Keep a copy of the running version on this PC (newest 5) before an update replaces it."""
+    try:
+        root = os.path.join(os.path.dirname(config_file()), "app-backup")
+        dst = os.path.join(root, "v" + HUB_VERSION)
+        if not os.path.isdir(dst):
+            os.makedirs(dst)
+            for f in os.listdir(APP_DIR):
+                fp = os.path.join(APP_DIR, f)
+                if os.path.isfile(fp) and not f.endswith((".tmp", ".pyc")):
+                    shutil.copy2(fp, os.path.join(dst, f))
+        olds = sorted((os.path.join(root, d) for d in os.listdir(root)), key=os.path.getmtime)
+        for d in olds[:-5]:
+            shutil.rmtree(d, ignore_errors=True)
+    except Exception as e:
+        print("app backup:", repr(e))
+
+
 def github_check(force=False):
     if GH["busy"] or not (CONFIG.get("github_updates", True) or force):
         return
@@ -1829,6 +1914,7 @@ def github_check(force=False):
             with open(tmp, "wb") as fh:
                 fh.write(data["hub.py"])
             py_compile.compile(tmp, cfile=tmp + "c", doraise=True)
+        backup_app()
         for f in sorted(data, key=lambda x: x == "hub.py"):  # hub.py last
             dst = os.path.join(APP_DIR, f)
             try:
@@ -1891,6 +1977,8 @@ def monitor():
             if me():
                 if tick % 10 == 1:
                     ensure_default_project()
+                if tick % 4 == 3:
+                    auto_update_links()
                 watch_poll()
                 watch_flush()
                 status = compute_status(vegas, ui_seen, view)
