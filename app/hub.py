@@ -32,6 +32,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 import uuid
 import webbrowser
@@ -39,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "3.2"
+HUB_VERSION = "3.3"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -729,7 +730,7 @@ def scan_library():
 
 
 RENDER_WATCH = {"known": None, "pending": {}}
-NOT_RENDER_DIRS = ("linked", "requests", "inbox")
+NOT_RENDER_DIRS = ("linked", "requests", "inbox", "downloads")
 
 
 def detect_renders(items):
@@ -1389,6 +1390,7 @@ def ws_state():
     evs = ws_events()
     projects, parts, reqs, comments, links = {}, {}, {}, {}, {}
     exports = {}
+    credits = {}
     moves = {}
     for e in read_jsonl_dir(NOTES_DIR):
         if e.get("kind") == "move" and e.get("from") and e.get("to"):
@@ -1466,6 +1468,9 @@ def ws_state():
             links[e["lid"]] = {"lid": e["lid"], "pid": e["pid"], "src": e.get("src"), "cat": e.get("cat", "Any"),
                                "file": e.get("file"), "target": e.get("target"), "version": e.get("version"),
                                "vmtime": e.get("vmtime"), "by": u, "ts": ts, "deleted": False, "pinned": False}
+        elif k == "credit" and e.get("file"):
+            credits[follow(e["file"])] = {x: e.get(x) for x in ("title", "creator", "license", "license_version", "license_url",
+                                                                "page", "source", "provider", "attribution", "needs_credit")}
         elif k == "export_mark" and e.get("file"):
             exports[follow(e["file"])] = {"value": bool(e.get("value", True)), "user": u, "ts": ts,
                                           "auto": bool(e.get("auto")), "app": e.get("app")}
@@ -1481,7 +1486,7 @@ def ws_state():
     state = {"projects": projects, "parts": {k: v for k, v in parts.items() if not v["deleted"]},
              "requests": reqs, "comments": comments,
              "links": {k: v for k, v in links.items() if not v["deleted"]}, "events": evs[-400:],
-             "exports": exports}
+             "exports": exports, "credits": credits}
     with WS_LOCK:
         WS_CACHE["sig"], WS_CACHE["state"] = sig, state
     return state
@@ -1742,7 +1747,7 @@ def ws_view():
     comments = sorted(st_["comments"].values(), key=lambda c: c["ts"])
     exports = [dict(v, file=k) for k, v in st_["exports"].items() if v.get("auto") and now() - v["ts"] < 86400]
     return {"projects": projects, "parts": parts, "requests": reqs, "links": links, "comments": comments,
-            "auto_exports": exports,
+            "auto_exports": exports, "credits": st_["credits"],
             "events": st_["events"][-300:], "types": {k: {"label": v["label"], "stages": v["stages"], "apps": v["apps"]}
                                                        for k, v in TYPES.items()}, "req_types": REQ_TYPES}
 
@@ -1854,9 +1859,211 @@ def ws_post(path, body):
         with LIB_LOCK:
             LIB["sig"] = None
         return 200, {"ok": True}
+    if path == "/api/online/search":
+        return 200, online_search(b.get("kind"), b.get("q"), b.get("page"), b.get("lic") or "any")
+    if path == "/api/online/add":
+        it = b.get("item") or {}
+        return 200, {"ok": True, "job": online_add(it, b.get("pid") or current_project(), b.get("res"))}
     if path == "/api/ws/outputs":
         return 200, {"items": outputs_of(b.get("pid"), b.get("cat") or "Any")[:50]}
     return None
+
+
+
+# ---------------------------------------------------------------- find online (free assets)
+# Openverse: Creative Commons images + audio (no key).  Poly Haven: CC0 HDRIs, textures, models (no key).
+OPENVERSE = os.environ.get("HUB_OPENVERSE", "https://api.openverse.org/v1")
+POLYHAVEN = os.environ.get("HUB_POLYHAVEN", "https://api.polyhaven.com")
+WEB_UA = "RotLab/%s (+https://github.com/doolz99/rotlab)" % HUB_VERSION
+DOWNLOADS = {}  # job id -> {title, state, got, total, file, error, ts}
+PH_CACHE = {}   # type -> (ts, assets)
+MAX_DOWNLOAD = 2 * 1024 ** 3
+
+
+def web_json(url, timeout=20):
+    req = urllib.request.Request(url, headers={"User-Agent": WEB_UA, "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            raise ValueError("The search site says we're searching too fast. Wait a minute and try again.")
+        raise ValueError("The search site answered with an error (%s)." % e.code)
+    except (urllib.error.URLError, socket.timeout, OSError):
+        raise ValueError("Can't reach the search site. Is the internet on?")
+
+
+def plain_license(code):
+    c = (code or "").lower()
+    if c in ("cc0", "pdm"):
+        return {"label": "Free to use", "credit": False, "commercial": True, "edit": True}
+    lab = []
+    if "nc" in c.split("-"):
+        lab.append("not for monetised videos")
+    if "nd" in c.split("-"):
+        lab.append("no edits allowed")
+    if "sa" in c.split("-"):
+        lab.append("share alike")
+    if c.startswith("by"):
+        lab.insert(0, "credit the creator")
+    if "sampling" in c:
+        lab = ["sampling licence, check the page"]
+    return {"label": ", ".join(lab).capitalize() or code, "credit": True,
+            "commercial": "nc" not in c.split("-"), "edit": "nd" not in c.split("-")}
+
+
+def online_search(kind, q, page=1, lic="any"):
+    q = (q or "").strip()
+    page = max(1, int(page or 1))
+    if kind in ("audio", "images"):
+        params = {"q": q, "page": page, "page_size": 20, "mature": "false"}
+        if lic == "free":
+            params["license"] = "cc0,pdm"
+        elif lic == "commercial":
+            params["license_type"] = "commercial,modification"
+        url = "%s/%s/?%s" % (OPENVERSE, "audio" if kind == "audio" else "images",
+                             "&".join("%s=%s" % (k, quote(str(v), safe=",")) for k, v in params.items()))
+        data = web_json(url)
+        out = []
+        for r in data.get("results", []):
+            lic_code = r.get("license") or ""
+            ext = (r.get("filetype") or os.path.splitext(urlparse(r.get("url") or "").path)[1].lstrip(".") or
+                   ("mp3" if kind == "audio" else "jpg")).lower()[:5]
+            dur = r.get("duration")
+            out.append({"source": "openverse", "kind": kind, "id": r.get("id"), "title": (r.get("title") or "untitled").strip(),
+                        "creator": r.get("creator") or "", "license": lic_code, "license_version": r.get("license_version") or "",
+                        "license_url": r.get("license_url") or "", "plain": plain_license(lic_code),
+                        "attribution": r.get("attribution") or "", "page": r.get("foreign_landing_url") or "",
+                        "thumb": r.get("thumbnail") or "", "preview": r.get("url") or "", "download": r.get("url") or "",
+                        "ext": ext, "duration": (dur / 1000.0) if isinstance(dur, (int, float)) else None,
+                        "provider": r.get("source") or r.get("provider") or "", "width": r.get("width"), "height": r.get("height")})
+        total = data.get("result_count") or 0
+        return {"items": out, "more": page < min(int(data.get("page_count") or 1), 12), "total": total}
+    if kind in ("hdris", "textures", "models"):
+        ts, assets = PH_CACHE.get(kind, (0, None))
+        if not assets or now() - ts > 6 * 3600:
+            assets = web_json("%s/assets?type=%s" % (POLYHAVEN, kind), timeout=30)
+            PH_CACHE[kind] = (now(), assets)
+        words = q.lower().split()
+        hits = []
+        for aid, a in assets.items():
+            hay = " ".join([aid, a.get("name", ""), " ".join(a.get("tags") or []), " ".join(a.get("categories") or []),
+                            str(a.get("category") or "")]).lower()
+            if all(w in hay for w in words):
+                hits.append((a.get("download_count") or 0, aid, a))
+        hits.sort(key=lambda x: -x[0])
+        per = 24
+        chunk = hits[(page - 1) * per: page * per]
+        out = [{"source": "polyhaven", "kind": kind, "id": aid, "title": a.get("name") or aid,
+                "creator": ", ".join((a.get("authors") or {}).keys()), "license": "cc0", "license_version": "1.0",
+                "license_url": "https://creativecommons.org/publicdomain/zero/1.0/", "plain": plain_license("cc0"),
+                "attribution": "", "page": "https://polyhaven.com/a/" + aid,
+                "thumb": a.get("thumbnail_url") or "https://cdn.polyhaven.com/asset_img/thumbs/%s.png?width=256&height=256" % aid,
+                "preview": "", "download": "", "ext": "", "duration": None, "provider": "Poly Haven"} for _, aid, a in chunk]
+        return {"items": out, "more": page * per < len(hits), "total": len(hits)}
+    raise ValueError("unknown kind")
+
+
+def _safe_name(s, n=60):
+    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", s or "").strip(" .")
+    return (s[:n].strip() or "download")
+
+
+def _fetch_to(url, dest, job, limit=MAX_DOWNLOAD):
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    tmp = os.path.join(os.path.dirname(dest), "~syncthing~rl-dl-%s.tmp" % uuid.uuid4().hex[:8])
+    req = urllib.request.Request(url, headers={"User-Agent": WEB_UA})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            if total:
+                job["total"] += total
+            while True:
+                b = r.read(256 * 1024)
+                if not b:
+                    break
+                f.write(b)
+                job["got"] += len(b)
+                if job["got"] > limit:
+                    raise ValueError("file is too big")
+        os.replace(tmp, dest)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    mark_written(rel(dest))
+    return dest
+
+
+PH_FOLDERS = {"hdris": "HDRIs", "textures": "Textures", "models": "Models"}
+
+
+def online_add_run(jid, item, pid, res):
+    job = DOWNLOADS[jid]
+    try:
+        base = proj_dir(pid)
+        kind = item.get("kind")
+        if item.get("source") == "openverse":
+            sub = "Sounds" if kind == "audio" else "Images"
+            ext = re.sub(r"[^a-z0-9]", "", (item.get("ext") or "").lower())[:5] or ("mp3" if kind == "audio" else "jpg")
+            url = item.get("download") or ""
+            if not url.startswith(("http://", "https://")):
+                raise ValueError("no download link")
+            dest = unique_path(os.path.join(base, "Downloads", sub), _safe_name(item.get("title")) + "." + ext)
+            _fetch_to(url, dest, job)
+            main = dest
+        elif item.get("source") == "polyhaven":
+            aid = re.sub(r"[^A-Za-z0-9_.-]", "", item.get("id") or "")
+            files = web_json("%s/files/%s" % (POLYHAVEN, aid), timeout=30)
+            folder = os.path.join(base, "Downloads", PH_FOLDERS.get(kind, "3D"))
+            if kind == "hdris":
+                reses = files.get("hdri") or {}
+                r = res if res in reses else ("2k" if "2k" in reses else sorted(reses, key=lambda x: int(re.sub(r"\D", "", x) or 0))[0])
+                f = reses[r].get("hdr") or reses[r].get("exr")
+                ext = "hdr" if reses[r].get("hdr") else "exr"
+                main = _fetch_to(f["url"], unique_path(folder, "%s_%s.%s" % (aid, r, ext)), job)
+            else:
+                pack = None
+                for fmt in ("blend", "gltf", "fbx"):
+                    reses = files.get(fmt) or {}
+                    if reses:
+                        r = res if res in reses else ("1k" if "1k" in reses else sorted(reses, key=lambda x: int(re.sub(r"\D", "", x) or 0))[0])
+                        pack = (fmt, r, reses[r].get(fmt) or next(iter(reses[r].values())))
+                        break
+                if not pack:
+                    raise ValueError("no downloadable files for this asset")
+                fmt, r, f = pack
+                adir = unique_path(folder, "%s_%s" % (aid, r))
+                main = _fetch_to(f["url"], os.path.join(adir, "%s_%s.%s" % (aid, r, fmt)), job)
+                for ipath, inf in (f.get("include") or {}).items():
+                    parts = [x for x in ipath.replace("\\", "/").split("/") if x not in ("", ".", "..")]
+                    if parts:
+                        _fetch_to(inf["url"], os.path.join(adir, *parts), job)
+        else:
+            raise ValueError("unknown source")
+        relm = rel(main)
+        credit = item.get("attribution") or ('"%s"%s, %s' % (item.get("title"), " by " + item["creator"] if item.get("creator") else "",
+                                                            "CC0 from Poly Haven" if item.get("source") == "polyhaven" else item.get("license", "")))
+        ws_add("credit", file=relm, title=item.get("title"), creator=item.get("creator"), license=item.get("license"),
+               license_version=item.get("license_version"), license_url=item.get("license_url"),
+               page=item.get("page"), source=item.get("source"), provider=item.get("provider"), attribution=credit,
+               needs_credit=bool((item.get("plain") or {}).get("credit")))
+        log_event("files", action="added", files=[relm], folder=os.path.dirname(relm), count=1, via="online")
+        with LIB_LOCK:
+            LIB["sig"] = None
+        job.update(state="done", file=relm)
+    except Exception as e:
+        job.update(state="error", error=str(e) if isinstance(e, ValueError) else "download failed (%s)" % e.__class__.__name__)
+        print("online download:", repr(e))
+
+
+def online_add(item, pid, res=None):
+    jid = uuid.uuid4().hex[:8]
+    DOWNLOADS[jid] = {"id": jid, "title": item.get("title"), "state": "downloading", "got": 0, "total": 0,
+                      "file": None, "error": None, "ts": now(), "pid": pid}
+    for k in [k for k, v in DOWNLOADS.items() if v["state"] != "downloading" and now() - v["ts"] > 600]:
+        DOWNLOADS.pop(k, None)
+    threading.Thread(target=online_add_run, args=(jid, item, pid, res), daemon=True).start()
+    return jid
 
 
 # ---------------------------------------------------------------- self-update
@@ -2156,7 +2363,7 @@ def build_state():
         "ui": ui_hash(), "update": dict(UPDATE), "people": people, "my_vegas": s["vegas"], "clash": clash,
         "chat": chat[-300:], "log": log[-300:], "unread": {"chat": unread_chat, "log": unread_log, "requests": mine_reqs},
         "ws": wsv, "project": current_project(), "shared": SHARED, "folders": folders_map(wsv),
-        "read": rd, "lib_gen": LIB["gen"], "inbox": inbox_files_count(), "upload": up,
+        "read": rd, "lib_gen": LIB["gen"], "inbox": inbox_files_count(), "upload": up, "downloads": sorted(DOWNLOADS.values(), key=lambda d: d["ts"]),
         "syncthing": s["syncthing"], "sync": dict(SYNC), "phone": phone_state(),
         "settings": {"auto_sort": CONFIG.get("auto_sort", True), "date_folders": CONFIG.get("date_folders", True),
                      "autostart": get_autostart(), "windows": os.name == "nt",

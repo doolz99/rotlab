@@ -352,7 +352,7 @@ function renderProjects(){const list=W.projects.filter(p=>!p.archived);
    if(f)useIn(f,b.dataset.pid);else{const fs=[...(e.dataTransfer.files||[])];if(fs.length)uploadDlg(fs,b.dataset.pid)}}})}
 function selectProject(p){markSeen();pid=p;partSel=null;selPath=null;lib=null;markSeen();api("/api/ws/select",{pid}).catch(()=>{});if(area==="outline"&&!hasOutline())area="files";renderAll(true)}
 function setArea(a){if(a==="outline"&&!hasOutline()){newPart();return}area=a;LS.set("area",a);if(a!=="outline")partSel=a==="board"?partSel:null;
- api("/api/view",{view:({files:"Files",board:"the Board",outline:"the Outline"})[a]+" of "+pname(pid)}).catch(()=>{});renderAll(true)}
+ api("/api/view",{view:({files:"Files",board:"the Board",outline:"the Outline",online:"Find online"})[a]+" of "+pname(pid)}).catch(()=>{});renderAll(true)}
 
 /* ---------------- links ---------------- */
 async function useIn(file,target){if(target===S.shared)return toast("Shared is already visible to every project.");if(projOfPath(file)===target)return toast("That file is already in "+pname(target)+".");
@@ -400,13 +400,14 @@ function renderForYou(){const it=forYou();let h;
 
 /* ---------------- centre ---------------- */
 function renderTabs(){const open=W.requests.filter(r=>r.pid===pid&&!["done","cancelled"].includes(r.status)).length;
- const t=[["files","Files"],["board","Board"+(open?" ("+open+")":"")]];if(hasOutline())t.push(["outline","Outline"]);
+ const t=[["files","Files"],["board","Board"+(open?" ("+open+")":"")]];if(hasOutline())t.push(["outline","Outline"]);t.push(["online","Find online"]);
  const h=t.map(([k,l])=>`<button class="tab ${area===k?"on":""}" data-tab="${k}">${esc(l)}</button>`).join("")+`<span style="flex:1"></span><span class="dim" style="font-size:12px;padding:0 6px 4px">${esc(isShared()?"Shared: files every project can use":proj()?proj().type_label+" project"+(proj().exists?"":" · folder still syncing"):"")}</span>`;
  if($("tabs")._h===h)return;$("tabs").innerHTML=h;$("tabs")._h=h;$("tabs").querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>setArea(b.dataset.tab))}
 let viewKey="";
 function renderCenter(force){if(area==="outline"&&!hasOutline())area="files";
  const key=area+"|"+pid+"|"+partSel;
  if(area==="files"){if(force||viewKey!==key){viewKey=key;filesShell()}loadLib(force);return}
+ if(area==="online"){if(force||viewKey!==key){viewKey=key;onlineShell()}return}
  viewKey=key;
  const h=area==="board"?boardHtml():(partSel?partHtml():outlineHtml());
  const v=$("view");if(v._h===h&&!force)return;
@@ -537,9 +538,9 @@ function upOne(f,dest,batch,note,project,onp){return new Promise((res,rej)=>{con
  x.upload.onprogress=e=>{if(onp)onp(e.loaded)};x.onload=()=>{let j={};try{j=JSON.parse(x.responseText)}catch(e){}x.status===200?res(j.saved):rej(new Error(j.error||x.status))};x.onerror=()=>rej(new Error("connection lost"));x.send(f)})}
 
 /* ---------------- files (with comments) ---------------- */
-function filesShell(){$("view").innerHTML=`<div class="head"><h2>${esc(pname(pid))}</h2><span style="flex:1"></span><button class="btn sm" data-act="add">Add files...</button><button class="btn sm" data-act="openproj">Open folder</button><label for="find" class="dim">Find:</label><input id="find" class="field" style="width:190px" placeholder="name, tag or comment" value="${esc(q)}"></div>
+function filesShell(){$("view").innerHTML=`<div class="head"><h2>${esc(pname(pid))}</h2><span style="flex:1"></span><button class="btn sm" data-act="add">Add files...</button><button class="btn sm" data-act="openproj">Open folder</button><button class="btn sm" id="credBtn" title="Copy the credits for downloaded assets in this project">Copy credits</button><label for="find" class="dim">Find:</label><input id="find" class="field" style="width:190px" placeholder="name, tag or comment" value="${esc(q)}"></div>
  <div style="flex:1;min-height:0;display:flex;gap:6px"><div class="cats in" id="cats"></div><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px"><div class="list in" id="list"></div><div class="detail in" id="detail" style="display:none"></div></div></div>`;$("view")._h="";
- let ft=null;$("find").oninput=()=>{clearTimeout(ft);ft=setTimeout(()=>{q=$("find").value.trim();selPath=null;$("detail").style.display="none";loadLib(true)},250)}}
+ $("credBtn").onclick=copyCredits;let ft=null;$("find").oninput=()=>{clearTimeout(ft);ft=setTimeout(()=>{q=$("find").value.trim();selPath=null;$("detail").style.display="none";loadLib(true)},250)}}
 async function loadLib(force){const key=pid+"|"+cat+"|"+q;if(!force&&lib&&libGen===S.lib_gen&&libKey===key)return;
  try{const r=await api("/api/library",{cat,q,project:pid});if(area!=="files"||!$("list"))return;lib=r;libGen=r.gen;libKey=key;renderCats();renderList();if(selPath)selectFile(selPath,true)}catch(e){}}
 function renderCats(){const c=(lib&&lib.counts)||{},btn=k=>`<button class="cat ${!q&&cat===k?"on":""}" data-cat="${k}"><span>${k}</span><span class="n">${c[k]||0}</span></button>`;
@@ -584,7 +585,7 @@ async function selectFile(path,keep){selPath=path;document.querySelectorAll("#li
  const lk=linkOfTarget(path),usedIn=W.links.filter(l=>l.file===path||(l.version===path));
  $("detail").innerHTML=`<div style="flex:1 1 380px;min-width:260px;display:flex;flex-direction:column;gap:4px;min-height:0"><div class="stage">${pv}</div>${timed?'<div class="marks" id="marks"></div>':""}</div>
   <div class="dside"><div><b>${esc(d.name)}</b> <span class="dim">· ${size(d.size)}${d.by?" · added by "+esc(who(d.by)):""}</span>
-   ${lk?`<div style="font-size:12px;color:#9db8ff">Linked from ${esc(pname(lk.src))} · ${esc(linkLabel(lk))} <a data-lver="${lk.lid}">versions</a></div>`:""}${usedIn.length?`<div class="dim" style="font-size:12px">Used in ${usedIn.map(l=>esc(pname(l.pid))).join(", ")}</div>`:""}
+   ${lk?`<div style="font-size:12px;color:#9db8ff">Linked from ${esc(pname(lk.src))} · ${esc(linkLabel(lk))} <a data-lver="${lk.lid}">versions</a></div>`:""}${(W.credits||{})[path]?`<div style="font-size:12px;color:#d8cfa6">${esc(W.credits[path].attribution)}${W.credits[path].page?` · <a href="${esc(W.credits[path].page)}" target="_blank" rel="noopener">page</a>`:""}</div>`:""}${usedIn.length?`<div class="dim" style="font-size:12px">Used in ${usedIn.map(l=>esc(pname(l.pid))).join(", ")}</div>`:""}
    ${["Video","Audio","Images","Graphics"].includes(d.media)&&!lk?`<div class="dim" style="font-size:12px">${d.cat==="Exports"?`Export of ${esc(pname(projOfPath(path)))}${(W.auto_exports||[]).some(x=>x.file===path&&x.value)?" (spotted as a render"+(((W.auto_exports||[]).find(x=>x.file===path)||{}).app?" from "+esc((W.auto_exports||[]).find(x=>x.file===path).app):"")+")":""} · <a data-exp="0">not an export</a>`:`<a data-exp="1">mark as an export</a> <span class="dim">(finished versions other projects can link to)</span>`}</div>`:""}</div>
    <div style="display:flex;gap:5px;flex-wrap:wrap"><button class="btn sm" id="dOpen">${d.app?"Open in "+esc(d.app):"Open"}</button>${d.app?`<button class="btn sm" id="dHist">History (${d.history_count})</button>`:""}<button class="btn sm" id="dShow">Show in folder</button><button class="btn sm" id="dUse">Use in...</button><button class="btn sm" id="dReq">Request...</button></div>
    <div class="chips" id="dTags">${TAGS.concat(d.tags.filter(t=>!TAGS.includes(t))).map(t=>`<button class="chip ${d.tags.includes(t)?"on":""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}<button class="chip" id="dTagAdd">+ tag</button></div>
@@ -656,7 +657,7 @@ function renderPeople(){const ppl=(S.people||[]).slice().sort((a,b)=>(a.user===S
 function fileLink(f){return `<a data-go="${esc(f)}">${esc(short(f))}</a>`}
 function logHtml(e){const u=`<b>${esc(who(e.user))}</b>`,files=e.files||[],n=e.count||files.length,fld=e.folder&&e.folder!=="."?e.folder:"the top folder";
  const grp=(verb,prep)=>{if(n===1&&files[0])return `${u} ${verb} ${fileLink(files[0])}`;const open=openGroups.has(e.id);return `${u} ${verb} ${n} files ${prep} ${esc(fld)} <a data-grp="${esc(e.id)}">[${open?"-":"+"}]</a>`+(open?`<div class="sub">${files.map(f=>`<div>${fileLink(f)}</div>`).join("")}</div>`:"")};
- switch(e.type){case"files":if(e.action==="added")return grp("added","to");if(e.action==="modified")return grp("changed","in");if(e.action==="restored")return `${u} restored ${fileLink(files[0])}`;
+ switch(e.type){case"files":if(e.action==="added")return e.via==="online"&&n===1?`${u} downloaded ${fileLink(files[0])}`:grp("added","to");if(e.action==="modified")return grp("changed","in");if(e.action==="restored")return `${u} restored ${fileLink(files[0])}`;
    if(e.action==="deleted")return n===1?`${u} deleted ${esc(short(files[0]))}${e.user!==S.me?` <a data-undel="${esc(files[0])}">restore</a>`:""}`:`${u} deleted ${n} files from ${esc(fld)}`;
    if(e.action==="renamed"){const ps=e.pairs||[];return ps.length===1?`${u} moved ${esc(short(ps[0][0]))} → ${fileLink(ps[0][1])}`:`${u} moved ${ps.length} files`}return `${u} ${esc(e.action)} ${n} files`;
   case"saved":return `${u} saved ${fileLink(e.file)}`;
@@ -719,6 +720,59 @@ let lastSeenTs=null;
 function notify(){const evs=S.chat.concat(W.events.filter(e=>["req_new","req_submit"].includes(e.kind))).filter(e=>e.user!==S.me);const newest=evs.reduce((a,e)=>Math.max(a,e.ts),0);
  if(lastSeenTs!==null&&!focused)for(const e of evs.filter(e=>e.ts>lastSeenTs).slice(-3)){const body=e.kind?(wsLogHtml(e)||"").replace(/<[^>]+>/g,""):e.user+": "+e.text;if(window.Notification&&Notification.permission==="granted")new Notification("RotLab",{body})}
  lastSeenTs=Math.max(lastSeenTs||0,newest)}
+
+/* ---------------- find online ---------------- */
+const ON={kind:LS.get("on_kind","audio"),q:"",lic:LS.get("on_lic","any"),page:1,items:[],more:false,busy:false,err:"",total:0,res:"",added:{}};
+const ON_KINDS=[["audio","Sounds & music"],["images","Images"],["hdris","3D: HDRI skies"],["textures","3D: Textures"],["models","3D: Models"]];
+function onlineShell(){const ph=["hdris","textures","models"].includes(ON.kind);
+ $("view").innerHTML=`<div class="head"><h2>Find online</h2><span class="dim">free sounds, images and 3D assets · downloads go into <b>${esc(pname(pid))}</b></span></div>
+ <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><select id="onKind" class="field" aria-label="What to search for">${ON_KINDS.map(([k,l])=>`<option value="${k}" ${k===ON.kind?"selected":""}>${l}</option>`).join("")}</select>
+  <input id="onQ" class="field" style="flex:1;min-width:160px" placeholder="${ph?"e.g. brick, sunset, chair":"e.g. whoosh, rain, crowd cheer"}" value="${esc(ON.q)}" aria-label="Search">
+  ${ph?`<select id="onRes" class="field" aria-label="Quality"><option value="">Normal quality</option><option value="1k" ${ON.res==="1k"?"selected":""}>1k (small)</option><option value="2k" ${ON.res==="2k"?"selected":""}>2k</option><option value="4k" ${ON.res==="4k"?"selected":""}>4k (big)</option></select>`
+   :`<select id="onLic" class="field" aria-label="Licence"><option value="any">Any free licence</option><option value="commercial" ${ON.lic==="commercial"?"selected":""}>OK for monetised videos</option><option value="free" ${ON.lic==="free"?"selected":""}>No credit needed</option></select>`}
+  <button class="btn b" id="onGo">Search</button></div>
+ <div class="in scroll" id="onRes_" style="padding:6px"></div>
+ <div class="dim" style="font-size:11.5px">${ph?'3D assets: Poly Haven, CC0 (free for anything). Powered by <a href="https://polyhaven.com" target="_blank" rel="noopener">Poly Haven</a>.':'From <a href="https://openverse.org" target="_blank" rel="noopener">Openverse</a> (Creative Commons). Always check the licence on the item\'s page; RotLab keeps the credit with every download.'}</div>`;$("view")._h="";
+ const go=()=>{ON.q=$("onQ").value.trim();ON.page=1;ON.items=[];onlineSearch()};
+ $("onGo").onclick=go;$("onQ").onkeydown=e=>{if(e.key==="Enter")go()};
+ $("onKind").onchange=()=>{ON.kind=$("onKind").value;LS.set("on_kind",ON.kind);ON.items=[];ON.err="";onlineShell();if(ON.q)go()};
+ if($("onLic"))$("onLic").onchange=()=>{ON.lic=$("onLic").value;LS.set("on_lic",ON.lic);if(ON.q)go()};
+ if($("onRes"))$("onRes").onchange=()=>{ON.res=$("onRes").value};
+ renderOnline();$("onQ").focus()}
+async function onlineSearch(){if(!ON.q&&!["hdris","textures","models"].includes(ON.kind)){ON.err="Type what you're looking for.";return renderOnline()}
+ ON.busy=true;ON.err="";renderOnline();
+ try{const r=await api("/api/online/search",{kind:ON.kind,q:ON.q,page:ON.page,lic:ON.lic});ON.items=ON.page===1?r.items:ON.items.concat(r.items);ON.more=r.more;ON.total=r.total}catch(e){ON.err=e.message}
+ ON.busy=false;renderOnline()}
+function onlineCard(it,i){const jid=ON.added[it.source+it.id],job=jid&&(S.downloads||[]).find(d=>d.id===jid);
+ const lc=it.plain.commercial&&it.plain.edit?(it.plain.credit?"#e8d27a":"#9fe0b0"):"#ffb27a";
+ const media=it.kind==="audio"?`<div class="thumb" style="width:100%;height:auto;padding:6px;display:block"><audio controls preload="none" src="${esc(it.preview)}" style="width:100%;height:30px"></audio></div>`
+  :`<div style="height:120px;background:#0e1118;display:flex;align-items:center;justify-content:center;overflow:hidden"><img src="${esc(it.thumb)}" alt="" loading="lazy" style="max-width:100%;max-height:120px" onerror="this.style.display='none'"></div>`;
+ let btn;if(job&&job.state==="downloading")btn=`<span class="dim" style="font-size:12px">Downloading${job.total?" "+Math.floor(job.got/job.total*100)+"%":"..."}</span>`;
+ else if(job&&job.state==="done")btn=`<a data-go="${esc(job.file)}">Added ✓ show</a>`;else if(job&&job.state==="error")btn=`<span style="color:#ffb4b4;font-size:12px">${esc(job.error)}</span> <button class="btn sm" data-add="${i}">Retry</button>`;
+ else btn=`<button class="btn sm b" data-add="${i}">Add</button>`;
+ return `<div class="tk" style="cursor:default;border-top-color:${lc};gap:5px">${media}<b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(it.title)}">${esc(it.title)}</b>
+  <span class="dim" style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${it.creator?"by "+esc(it.creator)+" · ":""}${esc(it.provider)}${it.duration?" · "+dur(it.duration):""}</span>
+  <span style="font-size:11.5px;color:${lc}">${esc(it.plain.label)}</span>
+  <span style="display:flex;gap:8px;align-items:center;justify-content:space-between">${btn}${it.page?`<a href="${esc(it.page)}" target="_blank" rel="noopener" style="font-size:12px">page</a>`:""}</span></div>`}
+function renderOnline(){const box=$("onRes_");if(!box)return;let h="";
+ if(ON.err)h=`<div class="empty" style="color:#ffb4b4">${esc(ON.err)}</div>`;
+ else if(!ON.items.length&&ON.busy)h='<div class="empty">Searching...</div>';
+ else if(!ON.items.length)h=`<div class="empty">${ON.q?"Nothing found. Try other words.":"Search for free "+({audio:"sound effects and music",images:"photos and pictures",hdris:"HDRI skies for lighting in Blender",textures:"textures (wood, brick, ground...)",models:"3D models"})[ON.kind]+". Leave it empty for 3D to see the most popular."}</div>`;
+ else h=`<div class="dim" style="font-size:12px;margin-bottom:6px">${ON.total} found</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px">${ON.items.map(onlineCard).join("")}</div>${ON.more?`<div style="padding:8px 0"><button class="btn" id="onMore" ${ON.busy?"disabled":""}>${ON.busy?"Loading...":"More"}</button></div>`:""}`;
+ if(box._h===h)return;const st=box.scrollTop;box.innerHTML=h;box._h=h;box.scrollTop=st;
+ box.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>onlineAdd(ON.items[+b.dataset.add]));
+ box.querySelectorAll("[data-go]").forEach(a=>a.onclick=()=>gotoFile(a.dataset.go));
+ if($("onMore"))$("onMore").onclick=()=>{ON.page++;onlineSearch()}}
+async function onlineAdd(it){const pl=it.plain;
+ if(!pl.edit&&!confirm("This licence says no edits are allowed, so you can't cut or change it in a video. Download anyway?"))return;
+ if(!pl.commercial&&!confirm("This licence doesn't allow commercial use, so it's not for monetised videos. Download anyway?"))return;
+ try{const r=await api("/api/online/add",{item:it,pid,res:ON.res||null});ON.added[it.source+it.id]=r.job;await tick();renderOnline()}catch(e){toast(e.message)}}
+let dlSeen={};
+function watchDownloads(){for(const d of (S.downloads||[])){const was=dlSeen[d.id];dlSeen[d.id]=d.state;if(was==="downloading"&&d.state==="done")toast("Downloaded "+d.title);if(was==="downloading"&&d.state==="error")toast(d.title+": "+d.error)}if(area==="online")renderOnline()}
+function creditsFor(prefix){const out=[],seen=new Set();for(const [f,c] of Object.entries(W.credits||{})){if(!f.startsWith(prefix))continue;if(!seen.has(c.attribution)){seen.add(c.attribution);out.push(c)}}
+ for(const l of W.links)if(l.target&&l.target.startsWith(prefix)){const c=(W.credits||{})[l.version];if(c&&!seen.has(c.attribution)){seen.add(c.attribution);out.push(c)}}return out}
+async function copyCredits(){const cs=creditsFor(pfolder(pid)+"/");if(!cs.length)return toast("Nothing in this project needs a credit yet.");
+ const txt=cs.map(c=>c.attribution+(c.page?" "+c.page:"")).join("\n");try{await navigator.clipboard.writeText(txt);toast("Copied "+cs.length+" credit"+(cs.length>1?"s":"")+", paste them into your video description")}catch(e){openDlg("Credits",`<textarea class="field" rows="10" style="width:100%">${esc(txt)}</textarea><div class="btns"><button class="btn" onclick="closeDlg()">Close</button></div>`)}}
 
 /* ---------------- live layer: instant chat, typing, cursor (LIVE-START) ---------------- */
 function makeLive(o){
@@ -794,7 +848,7 @@ async function tick(){
  if(!S.configured){if(!dlgOpen())settingsDlg(true);return}
  W=S.ws;Live.update(S.live);if(!pid||(pid!==S.shared&&!W.projects.some(p=>p.pid===pid&&!p.archived)))pid=S.project;
  if(focused&&!document.hidden)markSeen();
- renderAll(false);notify();
+ renderAll(false);notify();watchDownloads();
  if(area==="files"&&(!lib||S.lib_gen!==libGen))loadLib(true);
  if(focused&&!document.hidden&&(S.unread.chat||S.unread.log)&&!marking){marking=true;Promise.all([api("/api/read",{which:"chat"}),api("/api/read",{which:"log"})]).finally(()=>marking=false)}}
 (async()=>{await tick();const h=decodeURIComponent(location.hash.slice(1));if(h.startsWith("area="))setArea(h.slice(5));else if(h.startsWith("file="))gotoFile(h.slice(5));else if(h.startsWith("ticket="))ticketDlg(h.slice(7));else renderAll(true)})();
