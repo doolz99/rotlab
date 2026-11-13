@@ -1,0 +1,9 @@
+[1m[92m    Updating[0m crates.io index
+[1m[92m     Locking[0m 467 packages to highest compatible versions
+[1m[92m      Adding[0m generic-array v0.14.7 [1m[93m(available: v0.14.9)[0m
+[1m[92m      Adding[0m toml v0.8.2 [1m[93m(available: v0.8.23)[0m
+[1m[92m      Adding[0m toml_datetime v0.6.3 [1m[93m(available: v0.6.11)[0m
+[1m[92m      Adding[0m toml_edit v0.20.2 [1m[93m(available: v0.20.7)[0m
+[1m[92m      Adding[0m windows-sys v0.59.0 [1m[93m(available: v0.61.2)[0m
+[1m[92m   Compiling[0m rotlab-tv v4.2.1 (D:\a\rotlab\rotlab\shell\src-tauri)
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 1m 30s
