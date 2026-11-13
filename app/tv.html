@@ -128,14 +128,17 @@ body.vdown .stub.slide{animation-name:slideup}
 @keyframes slide{from{transform:translateY(-110%)}to{transform:none}}
 @keyframes slideup{from{transform:translateY(110%)}to{transform:none}}
 /* ---------- desk mode ---------- */
-body.desk #P_tv{width:336px;height:243px}
-body.desk .ddrawer{transition:transform .28s steps(5),opacity .28s steps(5)}
-body.desk .ddrawer.shut{opacity:0;pointer-events:none}
-body.desk #P_library.ddrawer{transform-origin:100% 50%}
-body.desk #P_projects.ddrawer{transform-origin:0 50%}
-body.desk #P_library.shut{transform:perspective(1400px) rotateY(88deg)}
-body.desk #P_projects.shut{transform:perspective(1400px) rotateY(-88deg)}
-.toast{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);padding:4px 10px;display:none;z-index:90;max-width:90%;font-size:12px}
+body.desk #P_tv{width:336px}
+body.float{background:#2b2b2b}
+body.desk #P_library,body.desk #P_projects{overflow:hidden;width:0}
+body.desk #P_library .dwrap,body.desk #P_projects .dwrap{height:100%}
+#tvTitle{cursor:move}#tvTitle button{cursor:pointer}
+body.dragging,body.dragging *{cursor:move!important}
+.toast{position:absolute;padding:4px 10px;display:none;z-index:90;font-size:12px;text-align:center}
+.dlg{position:absolute;z-index:80;width:300px;padding:3px;display:none;flex-direction:column}
+.dlg.show{display:flex}
+.dlg .body{padding:8px;display:flex;flex-direction:column;gap:6px}
+.dlg .btns{display:flex;gap:6px;justify-content:flex-end}
 </style></head>
 <body>
 <!-- ================= TV ================= -->
@@ -177,6 +180,7 @@ body.desk #P_projects.shut{transform:perspective(1400px) rotateY(-88deg)}
 <!-- ================= Stubs ================= -->
 <div class="part" id="P_stubs"></div>
 <div class="toast out" id="toast"></div>
+<div class="dlg out" id="dlg"><div class="tbar"><span class="t" id="dlgT"></span></div><div class="body" id="dlgB"></div></div>
 <input type="file" id="filePick" multiple style="display:none">
 
 <script>
@@ -188,7 +192,15 @@ const ago=ts=>{const d=Date.now()/1000-ts;if(d<90)return"just now";if(d<3600)ret
 const isImg=p=>/\.(jpe?g|png|gif|webp|bmp)$/i.test(p);
 const LS={get(k,d){try{const v=localStorage.getItem("rl_"+k);return v===null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem("rl_"+k,JSON.stringify(v))}catch(e){}}};
 async function api(url,body){const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||("Error "+r.status));return j}
-function toast(t){const e=$("toast");e.textContent=t;e.style.display="block";clearTimeout(e._t);e._t=setTimeout(()=>e.style.display="none",3500)}
+function toast(t){const e=$("toast");e.textContent=t;e.style.display="block";if(DESK)deskLayout();clearTimeout(e._t);e._t=setTimeout(()=>{e.style.display="none";if(DESK)deskLayout()},3500)}
+/* small dialogs drawn next to the TV (native pop-ups would land in the middle of the screen) */
+function dialog(title,html,buttons){return new Promise(res=>{const d=$("dlg");$("dlgT").textContent=title;
+ $("dlgB").innerHTML=html+`<div class="btns">${buttons.map((b,i)=>`<button class="btn ${i===0?"b":""}" data-i="${i}">${esc(b)}</button>`).join("")}</div>`;
+ const done=v=>{d.classList.remove("show");document.removeEventListener("keydown",key);if(DESK)deskLayout();res(v)};
+ const key=e=>{if(e.key==="Escape")done(-1);if(e.key==="Enter"&&e.target.tagName!=="TEXTAREA")done(0)};
+ $("dlgB").querySelectorAll("[data-i]").forEach(b=>b.onclick=()=>done(+b.dataset.i));document.addEventListener("keydown",key);
+ d.classList.add("show");if(DESK)deskLayout();const f=$("dlgB").querySelector("input,select");if(f)f.focus()})}
+const ask=async(title,text)=>(await dialog(title,`<div>${esc(text)}</div>`,["OK","Cancel"]))===0;
 const PART=new URLSearchParams(location.search).get("part")||"desk";
 const DESK=PART==="desk";
 document.body.dataset.part=PART;if(DESK)document.body.classList.add("desk");
@@ -211,7 +223,7 @@ function applyLayout(m){LAYOUT=m;document.body.classList.toggle("vdown",!m.vup);
  for(const p of ["library","projects"]){const el=$("P_"+p);el.classList.toggle("side-left",m.side[p]==="left");el.classList.toggle("side-right",m.side[p]!=="left")}
  if(PART==="tv"||DESK){$("aLib").textContent=m.side.library==="left"?(ST.lib?"▸":"◂"):(ST.lib?"◂":"▸");$("aProj").textContent=m.side.projects==="right"?(ST.proj?"◂":"▸"):(ST.proj?"▸":"◂")}
  if(DESK)deskLayout()}
-function want(w){if(DESK){Object.assign(DESKW,w);deskLayout();return}py().then(a=>{if(a)a.want(w)})}
+function want(w){if(DESK){Object.assign(DESKW,w);if("library" in w)animDrawer("library",w.library);if("projects" in w)animDrawer("projects",w.projects);deskLayout();return}py().then(a=>{if(a)a.want(w)})}
 function openClassic(hash){if(DESK||!window.pywebview){window.open("/classic"+(hash?"#"+hash:""),"rotlab_classic");return}py().then(a=>a?a.classic(hash||""):window.open("/classic#"+(hash||"")))}
 
 /* ---------- sounds ---------- */
@@ -244,7 +256,7 @@ const ST={lib:false,proj:false,chat:false,ch:LS.get("ch",1)};
 function initTV(){
  const tv=$("P_tv");
  /* drawers */
- const tog=k=>{ST[k]=!ST[k];snd(ST[k]?"open":"close");want(k==="lib"?{library:ST.lib}:{projects:ST.proj});$("bLib").classList.toggle("on",ST.lib);$("bProj").classList.toggle("on",ST.proj);applyLayout(LAYOUT)};
+ const tog=k=>{ST[k]=!ST[k];snd(ST[k]?"open":"close");want(k==="lib"?{library:ST.lib}:{projects:ST.proj});if(ST[k]){const h=HANDLERS[k==="lib"?"library":"projects"];if(h)h({t:"refresh"})}$("bLib").classList.toggle("on",ST.lib);$("bProj").classList.toggle("on",ST.proj);applyLayout(LAYOUT)};
  $("bLib").onclick=()=>tog("lib");$("bProj").onclick=()=>tog("proj");
  /* drops on the TV */
  const dz=(el,fn)=>{el.addEventListener("dragover",e=>{e.preventDefault();el.classList.add("drop")});el.addEventListener("dragleave",()=>el.classList.remove("drop"));
@@ -254,10 +266,10 @@ function initTV(){
  dz($("tvbody"),fs=>{staticBurst("+"+fs.length+" FILED");uploadTo(fs,S.shared)});
  /* title bar */
  $("chBtn").onclick=e=>{e.stopPropagation();ST.ch=ST.ch===1?2:1;LS.set("ch",ST.ch);staticBurst("CH"+ST.ch);renderScreen(true)};
- $("minBtn").onclick=()=>py().then(a=>a&&a.minimize());
- $("xBtn").onclick=()=>{if(DESK)return toast("Close this window to hide RotLab. It keeps running in the background.");py().then(a=>a&&a.close())};
+ $("minBtn").onclick=()=>py().then(a=>a?a.minimize():toast("Minimise this window to hide RotLab."));
+ $("xBtn").onclick=()=>py().then(a=>a?a.close():toast("Close this window to hide RotLab. It keeps running in the background."));
  $("menuBtn").onclick=e=>{e.stopPropagation();showMenu()};
- document.addEventListener("click",e=>{if(!e.target.closest("#menu"))$("menu").classList.remove("show")});
+ document.addEventListener("click",e=>{if(!e.target.closest("#menu")&&$("menu").classList.contains("show")){$("menu").classList.remove("show");if(DESK)deskLayout()}});
  /* chat bar: hidden until you come near it */
  let leaveT=null;
  const openBar=()=>{clearTimeout(leaveT);if(ST.chat)return;ST.chat=true;tv.classList.add("chat");snd("open");want({chat:true});if(DESK)deskLayout();sendStack("open");markRead()};
@@ -290,14 +302,14 @@ const availRect=()=>{const s=window.screen;return [s.availLeft||0,s.availTop||0,
 let overStack=false;
 
 /* --- menu --- */
-function showMenu(){const m=$("menu"),ck=v=>v?"✓":"";
+function showMenu(){const m=$("menu"),ck=v=>v?"✓":"";setTimeout(()=>{if(DESK)deskLayout()},0);
  const items=[["Open the full window",()=>openClassic("")],["Settings…",()=>openClassic("act=settings")],["Sync & linking…",()=>openClassic("act=sync")],["Upload from phone…",()=>openClassic("act=phone")],null,
   ["Keep on top",()=>{const v=!LS.get("ontop",true);LS.set("ontop",v);py().then(a=>a&&a.on_top(v))},LS.get("ontop",true)],
   ["Sounds",()=>{LS.set("snd",!LS.get("snd",true))},LS.get("snd",true)],
   ["Share what I type as I type",()=>{LS.set("livetype",!LS.get("livetype",true))},LS.get("livetype",true)],null,
-  ["Use the old one-window layout",async()=>{if(confirm("Switch back to the one big window? (You can switch again from Settings.)")){await api("/api/layout",{layout:"classic"});openClassic("")}}],
-  ["Quit RotLab",async()=>{if(confirm("Quit RotLab? Sync stops and you'll show as offline until it starts again.")){await api("/api/quit").catch(()=>{});py().then(a=>a&&a.close())}}]];
- m.innerHTML="";for(const it of items){if(!it){m.appendChild(document.createElement("hr"));continue}const b=document.createElement("button");b.innerHTML=`<span>${esc(it[0])}</span><span>${it.length>2?ck(it[2]):""}</span>`;b.onclick=()=>{m.classList.remove("show");it[1]()};m.appendChild(b)}
+  ["Use the old one-window layout",async()=>{if(await ask("Old layout","Switch back to the one big window? You can switch again from Settings. Takes effect next time RotLab opens.")){await api("/api/layout",{layout:"classic"});openClassic("")}}],
+  ["Quit RotLab",async()=>{if(await ask("Quit RotLab","Sync stops and you'll show as offline until it starts again.")){await api("/api/quit").catch(()=>{});py().then(a=>a&&a.close())}}]];
+ m.innerHTML="";for(const it of items){if(!it){m.appendChild(document.createElement("hr"));continue}const b=document.createElement("button");b.innerHTML=`<span>${esc(it[0])}</span><span>${it.length>2?ck(it[2]):""}</span>`;b.onclick=()=>{m.classList.remove("show");if(DESK)deskLayout();it[1]()};m.appendChild(b)}
  const r=$("menuBtn").getBoundingClientRect(),tvr=$("P_tv").getBoundingClientRect();m.style.left=Math.max(0,r.right-tvr.left-200)+"px";m.style.top=(r.bottom-tvr.top)+"px";m.classList.add("show")}
 /* --- project picker inside the TV --- */
 function pickProject(title,fn){const ps=W.projects.filter(p=>!p.archived);const box=$("picker"),L=$("pickL");$("pickT").textContent=title;
@@ -315,7 +327,7 @@ function recentMedia(){const out=[],seen=new Set();
 function plainLog(e){const n=e.count||(e.files||[]).length,f=(e.files||[])[0];switch(e.type){
  case"files":return `${who(e.user)} ${e.action==="added"?"added":e.action==="modified"?"changed":e.action==="deleted"?"deleted":e.action} ${n===1&&f?short(f):n+" files"}`;
  case"saved":return `${who(e.user)} saved ${short(e.file)}`;case"upload":return `${who(e.user)} uploaded ${e.count} file${e.count>1?"s":""}${e.via==="phone"?" from phone":""}`;
- case"note":return `${who(e.user)} commented on ${short(e.file)}`;case"joined":return `${who(e.user)} started using RotLab`;case"updated":return `${who(e.user)}'s RotLab updated to v${e.version}`;case"collected":return `${who(e.user)}'s ${short(e.file)}: outside files copied in`}return null}
+ case"note":return `${who(e.user)} commented on ${short(e.file)}`;case"joined":return `${who(e.user)} started using RotLab`;case"updated":return `${e.user===S.me?"Your":e.user+"'s"} RotLab updated to v${e.version}`;case"collected":return `${who(e.user)}'s ${short(e.file)}: outside files copied in`}return null}
 function wsPlain(e){const r=W.requests.find(x=>x.rid===e.rid),rl=r?"#"+r.num+" "+r.title:"a request";switch(e.kind){
  case"proj_new":return `${who(e.user)} made a project, ${e.name}`;case"req_new":return `${who(e.user)} asked for ${rl}`;case"req_claim":return `${who(e.user)} is doing ${rl}`;case"req_submit":return `${who(e.user)} sent files for ${rl}`;
  case"req_review":return e.verdict==="approve"?`${who(e.user)} marked ${rl} done`:`${who(e.user)} replied on ${rl}`;case"rev_comment":return `${who(e.user)} commented on ${short(e.file)}`;case"link_new":return `${who(e.user)} linked ${e.file?short(e.file):pname(e.src)} into ${pname(e.pid)}`}return null}
@@ -535,8 +547,8 @@ function initProjects(){let pid=null,V=null,last=0,gen=-1;
   box.querySelectorAll("[data-ticket]").forEach(r=>r.onclick=()=>openClassic("ticket="+r.dataset.ticket));
   box.querySelectorAll("[data-full]").forEach(r=>r.onclick=()=>openClassic("project="+pid))}
  $("projFull").onclick=()=>openClassic("project="+pid);
- $("pNew").onclick=async()=>{const n=prompt("Name of the new project (e.g. Park video, Park theme, Poster):","");if(!n||!n.trim())return;
-  const t=(prompt("What kind? video, music, art, 3d or other","video")||"other").trim().toLowerCase();try{const r=await api("/api/ws/project_new",{name:n.trim(),type:["video","music","art","3d"].includes(t)?t:"other"});pid=r.pid;await api("/api/ws/select",{pid});await loadState();load(true)}catch(e){toast(e.message)}};
+ $("pNew").onclick=async()=>{const r0=await dialog("New project",`<label>Name:</label><input class="field" id="npN" placeholder="e.g. Park video, Park theme, Poster"><label>Kind:</label><select class="field" id="npT"><option value="video">Video (VEGAS)</option><option value="music">Music (FL Studio)</option><option value="art">Art / animation</option><option value="3d">3D (Blender)</option><option value="other">Other</option></select>`,["Create","Cancel"]);
+  if(r0!==0)return;const n=$("npN").value.trim(),t=$("npT").value;if(!n)return;try{const r=await api("/api/ws/project_new",{name:n,type:t});pid=r.pid;await api("/api/ws/select",{pid});await loadState();load(true)}catch(e){toast(e.message)}};
  const V_=$("pview");
  V_.addEventListener("dragover",e=>{e.preventDefault();V_.classList.add("dropping")});V_.addEventListener("dragleave",()=>V_.classList.remove("dropping"));
  V_.addEventListener("drop",async e=>{e.preventDefault();V_.classList.remove("dropping");const lf=e.dataTransfer.getData("text/rotlab-files");
@@ -549,18 +561,68 @@ function initProjects(){let pid=null,V=null,last=0,gen=-1;
    Desk mode: everything in one window (when separate windows aren't available)
    ===================================================================================== */
 const DESKW={library:false,projects:false,chat:false,stack:0,stubs:0};
-function deskLayout(){if(!DESK)return;const vw=Math.max(document.documentElement.clientWidth,1000),tvw=336,bar=DESKW.chat?24:5,tb=214;
- const tx=Math.round((vw-tvw)/2),ty=330;
- const tv=$("P_tv");tv.style.left=tx+"px";tv.style.top=(ty-bar)+"px";tv.style.height=(tb+bar)+"px";
- const sk=$("P_stack");sk.style.left=(tx+18)+"px";sk.style.width=(tvw-36)+"px";sk.style.top="auto";sk.style.bottom=(window.innerHeight-(ty-bar))+"px";sk.style.visibility=DESKW.stack?"visible":"hidden";
- const sb=$("P_stubs");sb.style.left=(tx+24)+"px";sb.style.width=(tvw-48)+"px";sb.style.top=(ty+tb)+"px";sb.style.background="transparent";sk.style.background="transparent";
- const L=$("P_library"),P=$("P_projects");L.classList.add("ddrawer","side-left");P.classList.add("ddrawer","side-right");
- L.style.left=(tx-470)+"px";L.style.top=(ty-30)+"px";L.style.width="470px";L.style.height="560px";L.classList.toggle("shut",!DESKW.library);
- P.style.left=(tx+tvw)+"px";P.style.top=(ty-30)+"px";P.style.width="500px";P.style.height="560px";P.classList.toggle("shut",!DESKW.projects)}
-
+const FLOAT=new URLSearchParams(location.search).get("float")==="1";
+if(FLOAT)document.body.classList.add("float");
+const G={tvx:null,tvy:null,vup:true,open:{library:0,projects:0},anim:{},ready:!FLOAT,dragging:false};
+const DW={library:470,projects:500},DH=560,TVW=336,TB=214;
+/* drawers slide out of the TV in a few chunky steps */
+function animDrawer(k,on){clearInterval(G.anim[k]);const target=on?1:0;
+ G.anim[k]=setInterval(()=>{const f=G.open[k];const n=on?Math.min(1,f+0.2):Math.max(0,f-0.2);G.open[k]=n;deskLayout();if(n===target)clearInterval(G.anim[k])},45)}
+function deskLayout(){if(!DESK||!G.ready)return;
+ const vw=window.innerWidth,vh=window.innerHeight,bar=DESKW.chat?24:5;
+ if(G.tvx===null){const p=LS.get("tvpos",null);if(p&&p[0]>=0&&p[1]>=0&&p[0]<vw-60&&p[1]<vh-60){G.tvx=p[0];G.tvy=p[1]}else{G.tvx=Math.round((vw-TVW)/2);G.tvy=Math.round(vh*0.42)}}
+ G.tvx=Math.max(-TVW+80,Math.min(G.tvx,vw-80));G.tvy=Math.max(bar,Math.min(G.tvy,vh-60));
+ const x=G.tvx,y=G.tvy,up=y,down=vh-(y+TB);
+ const vup=up>=220||up>=down;if(vup!==G.vup||!document.body._lay){G.vup=vup}
+ /* which side each drawer opens on */
+ const room={left:x,right:vw-(x+TVW)},side={};
+ for(const [k,pref] of [["library","left"],["projects","right"]]){const other=pref==="left"?"right":"left";side[k]=room[pref]>=DW[k]||room[pref]>=room[other]?pref:other}
+ if(side.library===side.projects){const sd=side.library,need=DW.library+DW.projects;if(room[sd]<need&&room[sd==="left"?"right":"left"]>=DW.projects)side.projects=sd==="left"?"right":"left"}
+ const sig=JSON.stringify([vup,side]);if(sig!==document.body._lay){document.body._lay=sig;applyLayout({vup,side,chat:DESKW.chat})}
+ const tv=$("P_tv"),tvTop=vup?y-bar:y;tv.style.left=x+"px";tv.style.top=tvTop+"px";tv.style.height=(TB+bar)+"px";
+ /* drawers: revealed from the TV side outwards */
+ const offs={left:x,right:x+TVW},R=[];
+ for(const k of ["library","projects"]){const el=$("P_"+k),f=G.open[k],w=Math.round(DW[k]*f),sd=side[k];
+  const dy=Math.max(0,Math.min(y-30,vh-DH));el.style.top=dy+"px";el.style.height=DH+"px";el.style.width=w+"px";el.style.display=w>0?"flex":"none";
+  if(sd==="left"){el.style.left=(offs.left-w)+"px";offs.left-=f>0?DW[k]*f:0}else{el.style.left=offs.right+"px";offs.right+=f>0?DW[k]*f:0}
+  el.classList.toggle("side-left",sd==="left");el.classList.toggle("side-right",sd!=="left")}
+ /* messages above (or below) the chat bar, stubs on the other side */
+ const sk=$("P_stack");sk.style.left=(x+18)+"px";sk.style.width=(TVW-36)+"px";
+ if(vup){sk.style.top="auto";sk.style.bottom=(vh-tvTop)+"px"}else{sk.style.bottom="auto";sk.style.top=(tvTop+TB+bar)+"px"}
+ sk.style.visibility=DESKW.stack?"visible":"hidden";
+ const sb=$("P_stubs");sb.style.left=(x+24)+"px";sb.style.width=(TVW-48)+"px";
+ const stubH=sb.scrollHeight;
+ if(vup){sb.style.bottom="auto";sb.style.top=(y+TB)+"px"}
+ else if(y>=stubH+4){sb.style.top="auto";sb.style.bottom=(vh-y)+"px"}
+ else{sb.style.bottom="auto";sb.style.top=(tvTop+TB+bar+(DESKW.stack||0))+"px"}
+ /* toast and dialogs sit on the TV */
+ const t=$("toast");t.style.left=(x+20)+"px";t.style.width=(TVW-40)+"px";t.style.top=(tvTop+(vup?bar:0)+50)+"px";
+ const d=$("dlg");d.style.left=(x+18)+"px";d.style.top=Math.max(0,Math.min(tvTop+20,vh-260))+"px";
+ sendRegion()}
+let regT=null,lastReg="";
+function sendRegion(){if(!FLOAT)return;cancelAnimationFrame(regT);regT=requestAnimationFrame(()=>{
+ const rs=[],add=el=>{if(!el)return;const r=el.getBoundingClientRect();if(r.width>0&&r.height>0)rs.push([Math.floor(r.left),Math.floor(r.top),Math.ceil(r.width)+1,Math.ceil(r.height)+1])};
+ add($("P_tv"));if(G.open.library>0)add($("P_library"));if(G.open.projects>0)add($("P_projects"));
+ if(DESKW.stack)add($("stk"));for(const s of $("P_stubs").children)add(s);
+ if($("menu").classList.contains("show"))add($("menu"));if($("dlg").classList.contains("show"))add($("dlg"));if($("toast").style.display==="block")add($("toast"));
+ const key=JSON.stringify(rs);if(key===lastReg)return;lastReg=key;py().then(a=>a&&a.region(rs,window.devicePixelRatio||1))})}
+/* drag the TV by its title bar (the whole group follows); snaps to the screen edges */
+function initDrag(){const t=$("tvTitle");let sx,sy,bx,by,moved=false;
+ t.addEventListener("pointerdown",e=>{if(e.button!==0||e.target.closest("button"))return;t.setPointerCapture(e.pointerId);sx=e.clientX;sy=e.clientY;bx=G.tvx;by=G.tvy;moved=false;G.dragging=true;document.body.classList.add("dragging")});
+ t.addEventListener("pointermove",e=>{if(!G.dragging)return;const dx=e.clientX-sx,dy=e.clientY-sy;if(!moved&&Math.abs(dx)+Math.abs(dy)<3)return;moved=true;G.tvx=bx+dx;G.tvy=by+dy;deskLayout()});
+ const end=e=>{if(!G.dragging)return;G.dragging=false;document.body.classList.remove("dragging");if(!moved)return;
+  const vw=window.innerWidth,vh=window.innerHeight,bar=DESKW.chat?24:5,S=28;
+  const top=G.vup?G.tvy-bar:G.tvy,bottom=top+TB+bar;
+  if(Math.abs(G.tvx)<S)G.tvx=0;if(Math.abs(G.tvx+TVW-vw)<S)G.tvx=vw-TVW;
+  if(Math.abs(top)<S)G.tvy+=-top;if(Math.abs(bottom-vh)<S)G.tvy-=bottom-vh;
+  LS.set("tvpos",[Math.round(G.tvx),Math.round(G.tvy)]);deskLayout();snd("tick")};
+ t.addEventListener("pointerup",end);t.addEventListener("pointercancel",end)}
 /* ---------- start ---------- */
 const inits={tv:initTV,stack:initStack,stubs:initStubs,library:initLibrary,projects:initProjects};
-if(DESK){for(const k in inits)inits[k]();deskLayout();window.addEventListener("resize",deskLayout)}else if(inits[PART])inits[PART]();
+if(DESK){for(const k in inits)inits[k]();initDrag();window.addEventListener("resize",deskLayout);
+ if(FLOAT)py().then(async a=>{const r=a?await a.ready():null;G.ready=true;if(!r||!r.ok){document.body.classList.remove("float")}setTimeout(deskLayout,120)});else deskLayout();
+ new MutationObserver(()=>{if(DESK)deskLayout()}).observe($("P_stubs"),{childList:true});new MutationObserver(()=>sendRegion()).observe($("stk"),{childList:true,subtree:true})}
+else if(inits[PART])inits[PART]();
 const POLL={tv:2500,stubs:4000,library:5000,projects:5000,stack:0,desk:2500};
 (async()=>{if(PART!=="stack"||DESK){await loadState()}if(POLL[PART])setInterval(()=>{if(PART==="library"||PART==="projects"){if(document.visibilityState==="hidden")return}loadState()},POLL[PART])})();
 </script>

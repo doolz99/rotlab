@@ -9,7 +9,7 @@ RotLab now opens as a small **TV** window that you can put anywhere. Everything 
 - **Chat** hides behind the top of the TV. A yellow strip blinks when there's something unread, and new messages show for a few seconds. Move the mouse to the top of the TV to type; move up into the messages and more unfold. You see each other's words as they're typed (turn off in the ☰ menu).
 - **Stubs** hang under the TV for things waiting on you. Click one to open it, × to clear it.
 - **Drop files** on the Library button (or the TV) to file them; on the Projects button to pick a project.
-- Drag the TV by its title bar. Near a screen edge it snaps there; drawers open towards the side with room, and the chat flips under the TV if it's near the top.
+- Drag the TV by its title bar; everything moves with it. Near a screen edge it snaps there; drawers open towards the side with room, and the chat flips under the TV if it's near the top. Clicks anywhere else go through to whatever is behind.
 - ☰ menu: the full window (settings, sync, phone, requests, outline, Find online), keep on top, sounds, or go back to the old one-window layout.
 
 ## The full window

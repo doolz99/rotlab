@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "4.0.1"
+HUB_VERSION = "4.1"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -3586,345 +3586,178 @@ def has_native_window():
 
 
 def run_native_window():
-    """The TV layout: a small TV window with Library / Projects drawers, a message stack and stubs,
-    each its own borderless window that RotLab moves together. Falls back to one normal window."""
+    """The TV layout: one borderless window as big as the screen's work area, clipped (SetWindowRgn) to the
+    parts that are showing - the TV, open drawers, messages, stubs. Everything else is click-through.
+    Falls back to an ordinary window with the same layout when that isn't possible."""
     import webview
     if CONFIG.get("layout") == "classic":
         webview.create_window("RotLab", "http://localhost:%d/classic" % PORT, width=1320, height=900, min_size=(760, 560))
-        webview.start()
+        _wv_start(webview)
         return
-    TVGroup(webview).run()
+    if os.name == "nt":
+        try:
+            FloatWin(webview).run()
+            return
+        except Exception as e:
+            print("floating window failed, using a normal window:", repr(e))
+    webview.create_window("RotLab", "http://localhost:%d/tv" % PORT, width=1340, height=860, min_size=(900, 640),
+                          background_color="#1d2a2c", js_api=FloatApi(None))
+    _wv_start(webview)
 
 
-class TVGroup:
-    """Python side of the TV layout. All geometry here is in CSS pixels as the TV page reports them;
-    K converts to pywebview's units (they differ on scaled displays)."""
-    TVW, TVB, BAR, STRIP = 336, 214, 24, 5
-    DRAWER = {"library": (470, 560), "projects": (500, 560)}
-    PARTS = ("tv", "library", "projects", "stack", "stubs")
+def _wv_start(webview):
+    try:
+        webview.start(private_mode=False)  # keep the page's saved settings (TV position, sounds...) between runs
+    except TypeError:
+        webview.start()
+
+
+class FloatWin:
+    TITLE = "RotLab TV"
 
     def __init__(self, webview):
         self.wv = webview
-        self.win = {}
-        self.k = 1.0
-        self.lock = threading.RLock()
-        pos = CONFIG.get("tv_pos") or [None, None]
-        self.tx, self.ty = pos[0], pos[1]  # top-left of the TV body (below the chat bar)
-        self.avail = None  # [x, y, w, h] work area of the TV's monitor
-        self.want = {"library": False, "projects": False, "chat": False, "stack": 0, "stubs": 0}
-        self.cur = {}  # part -> [x, y, w, h] currently applied (css px), or None
-        self.side = {"library": "left", "projects": "right"}
-        self.vup = True  # chat above the TV (stubs below)
-        self.expect = None
-        self.drag_t = 0
-        self.ready = False
-        self.on_top = CONFIG.get("on_top", True)
+        self.win = None
+        self.hwnd = None
+        self.shown = False
+        self.work = None
+        self.lock = threading.Lock()
 
-    # ---- windows
     def run(self):
-        wv = self.wv
-        api = TVApi(self)
-        x = int(self.tx * self.k) if self.tx is not None else None
-        y = int((self.ty - self.STRIP) * self.k) if self.ty is not None else None
-        common = dict(frameless=True, easy_drag=False, resizable=False, on_top=self.on_top, background_color="#2b2b2b",
-                      js_api=api, min_size=(4, 4))
-        self.win["tv"] = wv.create_window("RotLab", "http://localhost:%d/tv?part=tv" % PORT, width=self.TVW,
-                                          height=self.TVB + self.STRIP, x=x, y=y, **common)
-        for p in ("library", "projects", "stack", "stubs"):
-            w, h = self.DRAWER.get(p, (self.TVW, 40))
-            self.win[p] = wv.create_window("RotLab " + p, "http://localhost:%d/tv?part=%s" % (PORT, p), width=w, height=h,
-                                           hidden=True, **common)
-            self.cur[p] = None
-        self.win["tv"].events.closed += self.closed
-        wv.start()
-
-    def closed(self, *a):
-        for p, w in list(self.win.items()):
-            if p != "tv":
-                try:
-                    w.destroy()
-                except Exception:
-                    pass
-
-    def js(self, part, code):
-        w = self.win.get(part)
-        if not w:
-            return None
-        try:
-            return w.evaluate_js(code)
+        import ctypes
+        try:  # physical pixels everywhere, so the clip region lines up on scaled displays
+            ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
         except Exception:
-            return None
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            except Exception:
+                pass
+        self.win = self.wv.create_window(self.TITLE, "http://localhost:%d/tv?float=1" % PORT, width=900, height=600,
+                                         frameless=True, easy_drag=False, hidden=True, on_top=CONFIG.get("on_top", True),
+                                         background_color="#2b2b2b", js_api=FloatApi(self))
+        _wv_start(self.wv)
 
-    def send(self, part, msg):
-        parts = self.PARTS if part == "*" else [part]
-        for p in parts:
-            if p in self.win and (p == "tv" or part != "*" or self.cur.get(p)):
-                threading.Thread(target=self.js, args=(p, "window.rlMsg&&rlMsg(%s)" % json.dumps(msg)), daemon=True).start()
-
-    def hide_from_taskbar(self, part):
-        if os.name != "nt":
-            return
+    def _hwnd(self):
+        if self.hwnd:
+            return self.hwnd
+        import ctypes
         try:
-            import ctypes
-            u = ctypes.windll.user32
-            h = u.FindWindowW(None, "RotLab " + part)
-            if h:
-                ex = u.GetWindowLongW(h, -20)
-                u.SetWindowLongW(h, -20, (ex | 0x80) & ~0x40000)  # tool window, not app window
+            h = int(self.win.native.Handle.ToInt64())
         except Exception:
-            pass
+            h = ctypes.windll.user32.FindWindowW(None, self.TITLE)
+        self.hwnd = h or None
+        return self.hwnd
 
-    # ---- geometry
-    def hello(self, g):
-        """First report from the TV page: its size in css px tells us the scale factor."""
-        with self.lock:
-            if g.get("iw"):
-                self.k = max(0.5, min(4.0, self.TVW / float(g["iw"])))
-            self.avail = g.get("avail")
-            if self.tx is None:
-                a = self.avail or [0, 0, 1280, 720]
-                self.tx, self.ty = a[0] + a[2] - self.TVW - 24, a[1] + 320
-            self.ready = True
-            self.layout(animate=False, move_tv=True)
-        return {"vup": self.vup, "side": self.side}
+    def ready(self):
+        """Cover the work area (the screen minus the taskbar) of the monitor RotLab was last on."""
+        import ctypes
+        from ctypes import wintypes
+        h = self._hwnd()
+        if not h:
+            raise RuntimeError("no window handle")
 
-    def tv_moved(self, sx, sy, avail):
-        """The TV page polls its own screen position; this follows a drag."""
-        with self.lock:
-            if self.expect and abs(sx - self.expect[0]) < 3 and abs(sy - self.expect[1]) < 3:
-                return
-            self.expect = None
-            bar = self.cur.get("tv", [0, 0, 0, 0])
-            off = (self.ty - bar[1]) if bar else self.STRIP
-            self.tx, self.ty = sx, sy + off
-            if avail:
-                self.avail = avail
-            self.compute()
-            # keep the window's top where the user put it, whichever side the chat bar is on
-            self.ty = sy + ((self.BAR if self.want["chat"] else self.STRIP) if self.vup else 0)
-            if bar:
-                self.cur["tv"] = [sx, sy, bar[2], bar[3]]
-            self.drag_t = time.time()
-            self.layout(animate=False, move_tv=False)
-        threading.Thread(target=self._snap_later, args=(self.drag_t,), daemon=True).start()
+        class MI(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+        u = ctypes.windll.user32
+        mon_pt = CONFIG.get("tv_monitor") or [0, 0]
+        mon = u.MonitorFromPoint(wintypes.POINT(int(mon_pt[0]), int(mon_pt[1])), 1)  # nearest, else primary
+        mi = MI()
+        mi.cbSize = ctypes.sizeof(MI)
+        u.GetMonitorInfoW(mon, ctypes.byref(mi))
+        r = mi.rcWork
+        self.work = [r.left, r.top, r.right - r.left, r.bottom - r.top]
+        # tiny region first so nothing flashes, then move/size to the work area
+        self._set_region([])
+        u.SetWindowPos(h, 0, r.left, r.top, r.right - r.left, r.bottom - r.top, 0x0010 | 0x0004)  # NOACTIVATE|NOZORDER
+        return {"ok": True, "work": self.work}
 
-    def _snap_later(self, t0):
-        time.sleep(0.45)
-        with self.lock:
-            if self.drag_t != t0 or not self.avail:
-                return
-            a = self.avail
-            x, y = self.tx, self.ty
-            t = self.cur.get("tv") or [x, y, self.TVW, self.TVB]
-            top, bottom = t[1], t[1] + t[3]
-            if abs(x - a[0]) < 28:
-                x = a[0]
-            if abs((x + self.TVW) - (a[0] + a[2])) < 28:
-                x = a[0] + a[2] - self.TVW
-            if abs(top - a[1]) < 28:
-                y += a[1] - top
-            if abs(bottom - (a[1] + a[3])) < 28:
-                y -= bottom - (a[1] + a[3])
-            x = max(a[0] - self.TVW + 60, min(x, a[0] + a[2] - 60))
-            y = max(a[1], min(y, a[1] + a[3] - 60))
-            self.tx, self.ty = x, y
-            CONFIG["tv_pos"] = [int(x), int(y)]
-            save_config()
-            self.layout(animate=True, move_tv=True)
-
-    def set_want(self, w):
-        with self.lock:
-            changed = {k for k, v in w.items() if self.want.get(k) != v}
-            self.want.update({k: v for k, v in w.items() if k in self.want})
-            if changed and self.ready:
-                self.layout(animate=True, move_tv=bool(changed & {"chat"}), changed=changed)
-
-    def compute(self):
-        a = self.avail or [0, 0, 1920, 1040]
-        ax, ay, aw, ah = a
-        x, y = self.tx, self.ty
-        space_up, space_down = y - ay, (ay + ah) - (y + self.TVB)
-        self.vup = space_up >= 220 or space_up >= space_down
-        bar = self.BAR if self.want["chat"] else self.STRIP
-        r = {}
-        r["tv"] = [x, y - bar, self.TVW, self.TVB + bar] if self.vup else [x, y, self.TVW, self.TVB + bar]
-        sh = int(self.want["stack"] or 0)
-        if sh > 0:
-            r["stack"] = [x + 18, r["tv"][1] - sh, self.TVW - 36, sh] if self.vup else [x + 18, r["tv"][1] + r["tv"][3], self.TVW - 36, sh]
-        else:
-            r["stack"] = None
-        bh = int(self.want["stubs"] or 0)
-        if bh > 0:
-            if self.vup:
-                r["stubs"] = [x + 24, y + self.TVB, self.TVW - 48, bh]
-            elif space_up >= bh:
-                r["stubs"] = [x + 24, y - bh, self.TVW - 48, bh]
-            else:  # no room above: hang them under the message stack
-                below = r["tv"][1] + r["tv"][3] + (sh if sh > 0 else 0)
-                r["stubs"] = [x + 24, below, self.TVW - 48, bh]
-        else:
-            r["stubs"] = None
-        left_room, right_room = x - ax, (ax + aw) - (x + self.TVW)
-        sides = {}
-        for p, pref in (("library", "left"), ("projects", "right")):
-            if not self.want[p]:
+    def _set_region(self, rects):
+        import ctypes
+        g = ctypes.windll.gdi32
+        h = self._hwnd()
+        rgn = g.CreateRectRgn(0, 0, 0, 0)
+        for x, y, w, hh in rects:
+            if w <= 0 or hh <= 0:
                 continue
-            w = self.DRAWER[p][0]
-            room = {"left": left_room, "right": right_room}
-            other = "right" if pref == "left" else "left"
-            sides[p] = pref if room[pref] >= w or room[pref] >= room[other] else other
-        # both on one side: the library sits next to the TV, projects beyond it
-        r["library"] = r["projects"] = None
-        offs = {"left": x, "right": x + self.TVW}
-        for p in ("library", "projects"):
-            if p not in sides:
-                continue
-            w, h = self.DRAWER[p]
-            sd = sides[p]
-            dy = max(ay, min(y - 30, ay + ah - h))
-            if sd == "left":
-                offs["left"] -= w
-                r[p] = [offs["left"], dy, w, h]
-            else:
-                r[p] = [offs["right"], dy, w, h]
-                offs["right"] += w
-            self.side[p] = sd
-        return r
+            part = g.CreateRectRgn(int(x), int(y), int(x + w), int(y + hh))
+            g.CombineRgn(rgn, rgn, part, 2)  # RGN_OR
+            g.DeleteObject(part)
+        if not ctypes.windll.user32.SetWindowRgn(h, rgn, True):  # the window owns rgn from here on
+            g.DeleteObject(rgn)
+            raise RuntimeError("SetWindowRgn failed")
 
-    def apply(self, part, rect):
-        w = self.win[part]
-        k = self.k
-        if rect is None:
-            if self.cur.get(part):
-                try:
-                    w.hide()
-                except Exception:
-                    pass
-            self.cur[part] = None
-            return
-        x, y, ww, hh = [int(round(v * k)) for v in rect]
+    def region(self, rects, dpr):
+        with self.lock:
+            d = float(dpr or 1)
+            self._set_region([[round(v * d) for v in r] for r in rects])
+            if not self.shown:
+                self.shown = True
+                self.win.show()
+
+
+class FloatApi:
+    """Called from the page as window.pywebview.api.*"""
+
+    def __init__(self, f):
+        self._f = f
+
+    def ready(self):
+        if not self._f:
+            return {"ok": False}
         try:
-            if part == "tv":
-                self.expect = (rect[0], rect[1])
-            w.resize(max(4, ww), max(4, hh))
-            w.move(x, y)
-            if part != "tv" and not self.cur.get(part):
-                w.show()
-                self.hide_from_taskbar(part)
+            return self._f.ready()
         except Exception as e:
-            print("window", part, e)
-        self.cur[part] = list(rect)
+            print("float ready:", repr(e))
+            return {"ok": False, "error": repr(e)}
 
-    def layout(self, animate=False, move_tv=False, changed=()):
-        r = self.compute()
-        msg = {"t": "layout", "vup": self.vup, "side": dict(self.side), "chat": self.want["chat"]}
-        if msg != getattr(self, "_sent", None):
-            self._sent = msg
-            for p in self.PARTS:
-                self.send(p, msg)
-        steps = 5 if animate else 1
-        drawers = [p for p in ("library", "projects") if p in changed]
-        for i in range(1, steps + 1):
-            f = i / float(steps)
-            for p in self.PARTS:
-                rect = r.get(p)
-                if p == "tv" and not move_tv and self.cur.get("tv") and rect and [int(v) for v in rect] == [int(v) for v in self.cur["tv"]]:
-                    continue
-                if p in drawers and animate:
-                    if rect is None:  # folding away: shrink towards the TV, then hide
-                        old = self.cur.get(p)
-                        if not old:
-                            continue
-                        if i == steps:
-                            self.apply(p, None)
-                            continue
-                        ww = max(8, old[2] * (1 - f))
-                        rr = [old[0] + old[2] - ww if self.side[p] == "left" else old[0], old[1], ww, old[3]]
-                        self._move_only(p, rr)
-                        continue
-                    ww = max(8, rect[2] * f)
-                    rr = [rect[0] + rect[2] - ww if self.side[p] == "left" else rect[0], rect[1], ww, rect[3]]
-                    if i == steps:
-                        rr = rect
-                    self.apply(p, rr)
-                    continue
-                if i == steps or not animate:
-                    if rect != self.cur.get(p):
-                        self.apply(p, rect)
-            if animate and i < steps:
-                time.sleep(0.05)
+    def region(self, rects, dpr=1):
+        if self._f:
+            try:
+                self._f.region(rects or [], dpr)
+            except Exception as e:
+                print("float region:", repr(e))
 
-    def _move_only(self, part, rect):
-        k = self.k
-        x, y, ww, hh = [int(round(v * k)) for v in rect]
-        try:
-            self.win[part].resize(max(4, ww), max(4, hh))
-            self.win[part].move(x, y)
-        except Exception:
-            pass
-        self.cur[part] = list(rect)
-
-
-class TVApi:
-    """Called from the pages as window.pywebview.api.*"""
-
-    def __init__(self, g):
-        self._g = g
-
-    def hello(self, g):
-        return self._g.hello(g or {})
-
-    def moved(self, sx, sy, avail=None):
-        self._g.tv_moved(sx, sy, avail)
-
-    def want(self, w):
-        threading.Thread(target=self._g.set_want, args=(w or {},), daemon=True).start()
-
-    def send(self, part, msg):
-        self._g.send(part, msg)
+    def save_monitor(self, x, y):
+        CONFIG["tv_monitor"] = [int(x), int(y)]
+        save_config()
 
     def on_top(self, v):
-        g = self._g
-        g.on_top = bool(v)
-        CONFIG["on_top"] = g.on_top
+        CONFIG["on_top"] = bool(v)
         save_config()
-        for w in g.win.values():
-            try:
-                w.on_top = g.on_top
-            except Exception:
-                pass
+        try:
+            self._win().on_top = bool(v)
+        except Exception:
+            pass
+
+    def _win(self):
+        import webview
+        return self._f.win if self._f else webview.windows[0]
 
     def minimize(self):
-        for p, w in self._g.win.items():
-            try:
-                if p == "tv":
-                    w.minimize()
-                elif self._g.cur.get(p):
-                    w.hide()
-                    self._g.cur[p] = None
-            except Exception:
-                pass
-        self._g.want.update({"library": False, "projects": False})
-        self._g.send("tv", {"t": "minimized"})
+        try:
+            self._win().minimize()
+        except Exception:
+            pass
 
     def close(self):
         try:
-            self._g.win["tv"].destroy()
+            self._win().destroy()
         except Exception:
             pass
 
     def classic(self, hash_=""):
+        import webview
         url = "http://localhost:%d/classic%s" % (PORT, ("#" + hash_) if hash_ else "")
-        w = self._g.win.get("classic")
-        try:
-            if w:
-                w.load_url(url)
-                w.show()
-                w.restore()
-                return
-        except Exception:
-            pass
-        self._g.win["classic"] = self._g.wv.create_window("RotLab (full window)", url, width=1320, height=900, min_size=(760, 560))
+        for w in webview.windows:
+            if w.title == "RotLab (full window)":
+                try:
+                    w.load_url(url)
+                    w.show()
+                    w.restore()
+                    return
+                except Exception:
+                    break
+        webview.create_window("RotLab (full window)", url, width=1320, height=900, min_size=(760, 560))
 
 
 def show_window():
