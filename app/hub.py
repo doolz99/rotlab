@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "4.1"
+HUB_VERSION = "4.1.1"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -3632,10 +3632,43 @@ class FloatWin:
                 ctypes.windll.shcore.SetProcessDpiAwareness(2)
             except Exception:
                 pass
+        # starts visible but off screen (a hidden window may never load its page); ready() then moves it
         self.win = self.wv.create_window(self.TITLE, "http://localhost:%d/tv?float=1" % PORT, width=900, height=600,
-                                         frameless=True, easy_drag=False, hidden=True, on_top=CONFIG.get("on_top", True),
-                                         background_color="#2b2b2b", js_api=FloatApi(self))
-        _wv_start(self.wv)
+                                         x=-20000, y=-20000, frameless=True, easy_drag=False,
+                                         on_top=CONFIG.get("on_top", True), background_color="#2b2b2b", js_api=FloatApi(self))
+        self.t0 = time.time()
+        try:
+            self.wv.start(self.watchdog, private_mode=False)
+        except TypeError:
+            self.wv.start(self.watchdog)
+
+    def watchdog(self):
+        """Never leave the user with nothing on screen: if the clipped window isn't up after a few
+        seconds, turn it into an ordinary window in the middle of the screen."""
+        time.sleep(9)
+        if self.shown:
+            return
+        print("floating window did not come up (ready=%s), showing a normal window" % bool(self.work))
+        self.fallback()
+
+    def fallback(self):
+        import ctypes
+        self.shown = True
+        self.fell = True
+        try:
+            h = self._hwnd()
+            if h:
+                from ctypes import wintypes
+                ctypes.windll.user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
+                ctypes.windll.user32.SetWindowRgn(h, None, True)
+        except Exception as e:
+            print("fallback region:", repr(e))
+        try:
+            self.win.resize(1340, 860)
+            self.win.move(80, 60)
+            self.win.show()
+        except Exception as e:
+            print("fallback move:", repr(e))
 
     def _hwnd(self):
         if self.hwnd:
@@ -3644,6 +3677,7 @@ class FloatWin:
         try:
             h = int(self.win.native.Handle.ToInt64())
         except Exception:
+            ctypes.windll.user32.FindWindowW.restype = ctypes.c_void_p
             h = ctypes.windll.user32.FindWindowW(None, self.TITLE)
         self.hwnd = h or None
         return self.hwnd
@@ -3659,6 +3693,10 @@ class FloatWin:
         class MI(ctypes.Structure):
             _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
         u = ctypes.windll.user32
+        u.MonitorFromPoint.restype = wintypes.HMONITOR
+        u.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+        u.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.c_void_p]
+        u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
         mon_pt = CONFIG.get("tv_monitor") or [0, 0]
         mon = u.MonitorFromPoint(wintypes.POINT(int(mon_pt[0]), int(mon_pt[1])), 1)  # nearest, else primary
         mi = MI()
@@ -3666,14 +3704,22 @@ class FloatWin:
         u.GetMonitorInfoW(mon, ctypes.byref(mi))
         r = mi.rcWork
         self.work = [r.left, r.top, r.right - r.left, r.bottom - r.top]
-        # tiny region first so nothing flashes, then move/size to the work area
+        # empty region first so nothing flashes, then move/size to the work area
         self._set_region([])
+        print("floating window: work area", self.work)
         u.SetWindowPos(h, 0, r.left, r.top, r.right - r.left, r.bottom - r.top, 0x0010 | 0x0004)  # NOACTIVATE|NOZORDER
         return {"ok": True, "work": self.work}
 
     def _set_region(self, rects):
         import ctypes
+        from ctypes import wintypes
         g = ctypes.windll.gdi32
+        u = ctypes.windll.user32
+        g.CreateRectRgn.restype = wintypes.HRGN
+        g.CreateRectRgn.argtypes = [ctypes.c_int] * 4
+        g.CombineRgn.argtypes = [wintypes.HRGN, wintypes.HRGN, wintypes.HRGN, ctypes.c_int]
+        g.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+        u.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
         h = self._hwnd()
         rgn = g.CreateRectRgn(0, 0, 0, 0)
         for x, y, w, hh in rects:
@@ -3682,7 +3728,7 @@ class FloatWin:
             part = g.CreateRectRgn(int(x), int(y), int(x + w), int(y + hh))
             g.CombineRgn(rgn, rgn, part, 2)  # RGN_OR
             g.DeleteObject(part)
-        if not ctypes.windll.user32.SetWindowRgn(h, rgn, True):  # the window owns rgn from here on
+        if not u.SetWindowRgn(h, rgn, True):  # the window owns rgn from here on
             g.DeleteObject(rgn)
             raise RuntimeError("SetWindowRgn failed")
 
@@ -3692,7 +3738,7 @@ class FloatWin:
             self._set_region([[round(v * d) for v in r] for r in rects])
             if not self.shown:
                 self.shown = True
-                self.win.show()
+                print("floating window up, %d parts" % len(rects))
 
 
 class FloatApi:
@@ -3708,14 +3754,17 @@ class FloatApi:
             return self._f.ready()
         except Exception as e:
             print("float ready:", repr(e))
+            self._f.fallback()
             return {"ok": False, "error": repr(e)}
 
     def region(self, rects, dpr=1):
-        if self._f:
+        if self._f and not getattr(self._f, "fell", False):
             try:
                 self._f.region(rects or [], dpr)
             except Exception as e:
                 print("float region:", repr(e))
+                if not self._f.shown:
+                    self._f.fallback()
 
     def save_monitor(self, x, y):
         CONFIG["tv_monitor"] = [int(x), int(y)]

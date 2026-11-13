@@ -212,7 +212,7 @@ function colorOf(u){if(S&&u===S.me)return"#b48cff";let h=0;for(const c of String
 
 /* ---------- talking to Python (windows) or to the other parts (desk) ---------- */
 let pyReady=null;
-const py=()=>pyReady||(pyReady=new Promise(res=>{if(window.pywebview&&window.pywebview.api)return res(window.pywebview.api);window.addEventListener("pywebviewready",()=>res(window.pywebview.api));if(DESK)res(null);setTimeout(()=>res(window.pywebview?window.pywebview.api:null),4000)}));
+const py=()=>pyReady||(pyReady=new Promise(res=>{if(window.pywebview&&window.pywebview.api)return res(window.pywebview.api);window.addEventListener("pywebviewready",()=>res(window.pywebview.api));if(!(window.chrome&&window.chrome.webview)&&!window.pywebview)res(null);setTimeout(()=>res(window.pywebview?window.pywebview.api:null),4000)}));
 const HANDLERS={};
 function bus(part,msg){if(DESK){const parts=part==="*"?Object.keys(HANDLERS):[part];for(const p of parts)if(HANDLERS[p])setTimeout(()=>HANDLERS[p](msg),0);return}
  py().then(a=>{if(a)a.send(part,msg)})}
@@ -462,7 +462,7 @@ function initStack(){let M={mode:"off",msgs:[],ghost:[]},depth=3,off=0,lastSig="
   box.className="stk";box.innerHTML=h;
   box.querySelectorAll("[data-pg]").forEach(b=>b.onclick=()=>page(+b.dataset.pg));
   const top=box.querySelector("[data-top]");if(top)top.addEventListener("mouseenter",()=>{if(depth<7&&M.msgs.length>depth){depth++;snd("tick");render(true)}});
-  requestAnimationFrame(()=>{const hgt=items.length||M.ghost.length?Math.ceil(box.scrollHeight)+2:0;want({stack:hgt})})}
+  setTimeout(()=>{const hgt=items.length||M.ghost.length?Math.ceil(box.scrollHeight)+2:0;want({stack:hgt})},0)}
  HANDLERS.stack=m=>{if(m.t!=="stack")return;const opening=m.mode==="open"&&M.mode!=="open";M=m;if(opening||m.mode!=="open"){depth=3;off=0;prevDepth=0}render(false)};
 }
 
@@ -486,7 +486,7 @@ function initStubs(){const root=$("P_stubs");let extra=[],shown=new Set(),dismis
   root.querySelectorAll(".stub").forEach(el=>el.onclick=async e=>{const x=its.find(i=>i.id===el.dataset.id);if(!x)return;
    if(!e.target.dataset.x&&x.go){if(x.go==="!restart"){await api("/api/restart",{window:true}).catch(()=>{});return}if(x.go.startsWith("file=")){const fs=LS.get("fseen",{});fs[x.go.slice(5)]=Date.now()/1000;LS.set("fseen",fs)}openClassic(x.go)}
    snd("tick");if(x.id.startsWith("tmp"))extra=extra.filter(i=>i.id!==x.id);else{dismissed[x.id]=1;LS.set("stubx",dismissed)}render()});
-  requestAnimationFrame(()=>want({stubs:its.length?Math.ceil(root.scrollHeight)+4:0}))}
+  setTimeout(()=>want({stubs:its.length?Math.ceil(root.scrollHeight)+4:0}),0)}
  HANDLERS.stubs=m=>{if(m.t==="stub"){const id="tmp"+Date.now();extra.unshift({id,text:m.text,ts:Date.now()/1000});render();setTimeout(()=>{extra=extra.filter(i=>i.id!==id);render()},12000)}else if(m.t==="refresh")loadState()};
  stateListeners.push(()=>{dismissed=LS.get("stubx",{});render()})}
 
@@ -600,12 +600,12 @@ function deskLayout(){if(!DESK||!G.ready)return;
  const d=$("dlg");d.style.left=(x+18)+"px";d.style.top=Math.max(0,Math.min(tvTop+20,vh-260))+"px";
  sendRegion()}
 let regT=null,lastReg="";
-function sendRegion(){if(!FLOAT)return;cancelAnimationFrame(regT);regT=requestAnimationFrame(()=>{
+function sendRegion(){if(!FLOAT)return;clearTimeout(regT);regT=setTimeout(()=>{
  const rs=[],add=el=>{if(!el)return;const r=el.getBoundingClientRect();if(r.width>0&&r.height>0)rs.push([Math.floor(r.left),Math.floor(r.top),Math.ceil(r.width)+1,Math.ceil(r.height)+1])};
  add($("P_tv"));if(G.open.library>0)add($("P_library"));if(G.open.projects>0)add($("P_projects"));
  if(DESKW.stack)add($("stk"));for(const s of $("P_stubs").children)add(s);
  if($("menu").classList.contains("show"))add($("menu"));if($("dlg").classList.contains("show"))add($("dlg"));if($("toast").style.display==="block")add($("toast"));
- const key=JSON.stringify(rs);if(key===lastReg)return;lastReg=key;py().then(a=>a&&a.region(rs,window.devicePixelRatio||1))})}
+ const key=JSON.stringify(rs);if(key===lastReg)return;lastReg=key;py().then(a=>a&&a.region(rs,window.devicePixelRatio||1))},16)}
 /* drag the TV by its title bar (the whole group follows); snaps to the screen edges */
 function initDrag(){const t=$("tvTitle");let sx,sy,bx,by,moved=false;
  t.addEventListener("pointerdown",e=>{if(e.button!==0||e.target.closest("button"))return;t.setPointerCapture(e.pointerId);sx=e.clientX;sy=e.clientY;bx=G.tvx;by=G.tvy;moved=false;G.dragging=true;document.body.classList.add("dragging")});
