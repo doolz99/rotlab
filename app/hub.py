@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "4.0"
+HUB_VERSION = "4.0.1"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -3938,6 +3938,34 @@ def show_window():
     return False
 
 
+def ensure_running_is_current():
+    """If an older RotLab is already running in the background (e.g. started with Windows before an update),
+    ask it to restart into this version, so the window doesn't talk to old code."""
+    base = "http://127.0.0.1:%d" % PORT
+    try:
+        with urllib.request.urlopen(base + "/api/state", timeout=5) as r:
+            ver = json.loads(r.read().decode("utf-8")).get("version")
+    except Exception:
+        return
+    if ver == HUB_VERSION:
+        return
+    print("running hub is v%s, this is v%s: restarting it" % (ver, HUB_VERSION))
+    try:
+        req = urllib.request.Request(base + "/api/restart", data=b'{"force": true, "window": false}',
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception:
+        pass
+    for _ in range(40):
+        time.sleep(0.5)
+        try:
+            with urllib.request.urlopen(base + "/api/state", timeout=3) as r:
+                if json.loads(r.read().decode("utf-8")).get("version") == HUB_VERSION:
+                    return
+        except Exception:
+            pass
+
+
 def main():
     # pythonw.exe (no console window) has no stdout - send output to a log file instead
     if sys.stdout is None or sys.stderr is None:
@@ -3955,6 +3983,7 @@ def main():
         # already running (e.g. started with Windows) -> just open a window onto it
         print("Hub already running - opening window.")
         if not background:
+            ensure_running_is_current()
             show_window()
         return
     threading.Thread(target=monitor, daemon=True).start()
