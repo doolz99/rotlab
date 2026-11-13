@@ -293,12 +293,13 @@ function settingsDlg(first){const st=S?S.settings:{};
    <label class="ck"><input type="radio" name="sStore" value="ondemand" ${st.storage==="ondemand"?"checked":""}> Only what I use: big videos, audio and images stay on the other PC until I Get them (previews always show)</label>
    <div class="dim" style="font-size:12px">You can change this per project at the top of Files.</div></fieldset>
   <label class="ck"><input type="checkbox" id="sLive" ${st.live!==false?"checked":""}> Live: instant chat, "is typing" and seeing each other's mouse (sent encrypted through a free public relay)</label>
+  ${first?"":`<label class="ck"><input type="checkbox" id="sTv" ${st.layout!=="classic"?"checked":""}> Use the TV layout (small TV window with Library and Projects folding out of it). Takes effect next time RotLab opens.</label>`}
   <label class="ck"><input type="checkbox" id="sGh" ${st.github_updates!==false?"checked":""}> Get new versions from GitHub automatically</label>
   <details><summary class="dim">Advanced</summary><div style="margin-top:6px"><label for="sKey">Syncthing API key (only if RotLab can't find your own Syncthing):</label><input id="sKey" class="field" style="width:100%"></div></details>
   <div class="dim" style="font-size:12px">Workspace folder: ${esc(S?S.root:"")}</div>
   <div class="btns"><button class="btn" id="sOk">OK</button>${first?"":'<button class="btn" id="sCancel">Cancel</button>'}</div>`,{locked:first});
  $("sOk").onclick=async()=>{const b={name:$("sName").value,auto_sort:$("sSort").checked,date_folders:$("sDate").checked,github_updates:$("sGh").checked,live:$("sLive").checked};const sm=document.querySelector('input[name=sStore]:checked');if($("sStart"))b.autostart=$("sStart").checked;if($("sKey").value.trim())b.api_key=$("sKey").value.trim();
-  try{await api("/api/setup",b);if(sm&&S&&S.settings&&sm.value!==S.settings.storage)await api("/api/storage/set",{mode:sm.value});closeDlg();tick()}catch(e){toast(e.message)}};
+  try{await api("/api/setup",b);if($("sTv"))await api("/api/layout",{layout:$("sTv").checked?"tv":"classic"});if(sm&&S&&S.settings&&sm.value!==S.settings.storage)await api("/api/storage/set",{mode:sm.value});closeDlg();tick()}catch(e){toast(e.message)}};
  if($("sCancel"))$("sCancel").onclick=closeDlg;$("sName").onkeydown=e=>{if(e.key==="Enter")$("sOk").click()};
 }
 function aboutDlg(){openDlg("About RotLab",`<div style="display:flex;gap:14px;align-items:center"><svg width="40" height="40" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="5" width="14" height="10" fill="#c0c0c0" stroke="#000"/><rect x="1" y="2" width="14" height="3" fill="#fff" stroke="#000"/><path d="M6 8 L11 10 L6 12 Z" fill="#000"/></svg><div><b>RotLab</b><br>Version ${esc(S.version)}${S.github&&S.github.latest?" · newest on GitHub: "+esc(S.github.latest):""}<br><span class="dim">Projects, files, requests and sync for making things together.<br>Older versions of RotLab are kept on this PC when it updates.</span></div></div><div class="btns"><button class="btn" id="aChk">Check for updates</button><button class="btn" onclick="closeDlg()">OK</button></div>`);
@@ -921,7 +922,8 @@ async function tick(){
  renderAll(false);notify();watchDownloads();
  if(area==="files"&&(!lib||S.lib_gen!==libGen))loadLib(true);
  if(focused&&!document.hidden&&(S.unread.chat||S.unread.log)&&!marking){marking=true;Promise.all([api("/api/read",{which:"chat"}),api("/api/read",{which:"log"})]).finally(()=>marking=false)}}
-(async()=>{await tick();const h=decodeURIComponent(location.hash.slice(1));if(h.startsWith("area="))setArea(h.slice(5));else if(h.startsWith("file="))gotoFile(h.slice(5));else if(h.startsWith("ticket="))ticketDlg(h.slice(7));else renderAll(true)})();
+(async()=>{await tick();const h=decodeURIComponent(location.hash.slice(1));if(h.startsWith("area="))setArea(h.slice(5));else if(h.startsWith("file="))gotoFile(h.slice(5));else if(h.startsWith("ticket="))ticketDlg(h.slice(7));else if(h.startsWith("act="))act(h.slice(4));else if(h.startsWith("project=")){selectProject(h.slice(8))}else renderAll(true)})();
+window.addEventListener("hashchange",()=>{const h=decodeURIComponent(location.hash.slice(1));if(h.startsWith("file="))gotoFile(h.slice(5));else if(h.startsWith("ticket="))ticketDlg(h.slice(7));else if(h.startsWith("act="))act(h.slice(4));else if(h.startsWith("project="))selectProject(h.slice(8))});
 setInterval(tick,2500);
 if(window.Notification&&Notification.permission==="default")setTimeout(()=>{try{Notification.requestPermission()}catch(e){}},4000);
 </script>

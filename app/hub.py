@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "3.5"
+HUB_VERSION = "4.0"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -1930,6 +1930,23 @@ def ws_post(path, body):
     if path == "/api/online/add":
         it = b.get("item") or {}
         return 200, {"ok": True, "job": online_add(it, b.get("pid") or current_project(), b.get("res"))}
+    if path == "/api/layout":
+        CONFIG["layout"] = "classic" if b.get("layout") == "classic" else "tv"
+        save_config()
+        return 200, {"ok": True, "layout": CONFIG["layout"]}
+    if path == "/api/project_view":
+        return 200, project_view(b.get("pid"))
+    if path == "/api/library_view":
+        return 200, library_view(b.get("q"), b.get("cat"))
+    if path == "/api/link_many":
+        done, errs = 0, []
+        for f in (b.get("files") or [])[:200]:
+            try:
+                new_link(b.get("pid"), None, "Any", f)
+                done += 1
+            except Exception as e:
+                errs.append("%s: %s" % (os.path.basename(f), e))
+        return 200, {"ok": True, "done": done, "errors": errs}
     if path == "/api/ws/outputs":
         return 200, {"items": outputs_of(b.get("pid"), b.get("cat") or "Any")[:50]}
     return None
@@ -2803,7 +2820,118 @@ def ui_file(name):
 
 
 def ui_hash():
-    return (file_hash(os.path.join(APP_DIR, "ui.html")) or "")[:12]
+    return ((file_hash(os.path.join(APP_DIR, "ui.html")) or "")[:6] + (file_hash(os.path.join(APP_DIR, "tv.html")) or "")[:6])
+
+
+# ---------------------------------------------------------------- TV layout: library usage + project view
+USAGE = {}  # project file path -> (mtime, [workspace paths it uses])
+USAGE_LOCK = threading.Lock()
+
+
+def usage_index(budget=15):
+    """shared path -> sorted list of project ids that use it (linked in, or referenced by a project file)."""
+    with LIB_LOCK:
+        items = list(LIB["items"])
+    out = {}
+    for l in ws_state()["links"].values():
+        f = l.get("file") or l.get("version") or ""
+        if f.startswith(SHARED + "/"):
+            out.setdefault(f, set()).add(l["pid"])
+    done = 0
+    for it in items:
+        if it["cat"] != "Project" or it.get("project") in (None, SHARED):
+            continue
+        with USAGE_LOCK:
+            c = USAGE.get(it["path"])
+        if not c or c[0] != it["mtime"]:
+            if done >= budget:
+                continue
+            done += 1
+            try:
+                used = [x["path"] for x in project_deps(it["path"])["items"] if x.get("path")]
+            except Exception:
+                used = []
+            c = (it["mtime"], used)
+            with USAGE_LOCK:
+                USAGE[it["path"]] = c
+        for p in c[1]:
+            if p.startswith(SHARED + "/"):
+                out.setdefault(p, set()).add(it["project"])
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def _here_state(path):
+    if os.path.exists(os.path.join(ROOT, path)):
+        return "here"
+    if path in (CONFIG.get("wanted") or {}):
+        return "getting"
+    return "remote" if path in remote_index() else "missing"
+
+
+def project_view(pid):
+    st_ = ws_state()
+    if pid not in st_["projects"]:
+        raise ValueError("unknown project")
+    p = st_["projects"][pid]
+    items = library(project=pid)["items"]
+    comments = {}
+    for c in st_["comments"].values():
+        if not c.get("resolved"):
+            comments[c["file"]] = comments.get(c["file"], 0) + 1
+    pfiles = [i for i in items if i["cat"] == "Project"]
+    renders = [i for i in items if i.get("export")]
+    linked_dir = (p["folder"] + "/linked/").lower()
+    own = [i for i in items if not i.get("export") and i["cat"] != "Project" and not i["path"].lower().startswith(linked_dir)]
+    uses, seen = [], set()
+    for l in st_["links"].values():
+        if l["pid"] != pid:
+            continue
+        src = l.get("file") or l.get("version") or ""
+        seen.add(src)
+        seen.add(l.get("target"))
+        uses.append({"name": os.path.basename(src or l.get("target") or "?"), "path": l.get("target"), "src": src,
+                     "from": l.get("src"), "how": "linked", "state": _here_state(l["target"]) if l.get("target") else "missing"})
+    for pf in pfiles[:3]:
+        with USAGE_LOCK:
+            c = USAGE.get(pf["path"])
+        if c is None or c[0] != pf["mtime"]:
+            try:
+                used = [x["path"] for x in project_deps(pf["path"])["items"] if x.get("path")]
+            except Exception:
+                used = []
+            with USAGE_LOCK:
+                USAGE[pf["path"]] = (pf["mtime"], used)
+            c = (pf["mtime"], used)
+        for u in c[1]:
+            if u in seen or not u.startswith(SHARED + "/"):
+                continue
+            seen.add(u)
+            uses.append({"name": os.path.basename(u), "path": u, "src": u, "from": SHARED, "how": "used by " + pf["name"],
+                         "state": _here_state(u)})
+    slim = lambda i: {"path": i["path"], "name": i["name"], "mtime": i["mtime"], "by": i.get("by"), "media": i.get("media"),
+                      "remote": bool(i.get("remote")), "getting": bool(i.get("getting")), "preview": i.get("preview"),
+                      "comments": comments.get(i["path"], 0) + i.get("notes", 0)}
+    reqs = [request_view(r, st_) for r in st_["requests"].values() if r["pid"] == pid]
+    reqs = [{"rid": r["rid"], "num": r["num"], "title": r["title"], "status": r["status"], "by": r["by"], "to": r["to"],
+             "claimed": r.get("claimed"), "type": r["type"]} for r in sorted(reqs, key=lambda r: -r["ts"]) if r["status"] not in ("done", "cancelled")]
+    return {"pid": pid, "name": p["name"], "type": p["type"], "folder": p["folder"],
+            "project_files": [slim(i) for i in pfiles[:6]], "uses": uses,
+            "own": [slim(i) for i in own[:12]], "own_count": len(own),
+            "renders": [slim(i) for i in renders[:6]], "requests": reqs}
+
+
+def library_view(q=None, cat=None):
+    r = library(cat=None, q=q, project=SHARED)
+    use = usage_index()
+    items = r["items"]
+    if cat and cat != "All" and not q:
+        items = [i for i in items if (i["media"] if cat in ("Video", "Audio", "Images", "Graphics") else i["cat"]) == cat]
+    out = []
+    for i in items[:800]:
+        out.append({"path": i["path"], "name": i["name"], "media": i["media"], "cat": i["cat"], "mtime": i["mtime"],
+                    "size": i["size"], "by": i.get("by"), "remote": bool(i.get("remote")), "getting": bool(i.get("getting")),
+                    "preview": i.get("preview"), "used_in": use.get(i["path"], []), "folder": i["folder"]})
+    return {"items": out, "total": len(r["items"]), "gen": r["gen"]}
 
 
 # ---------------------------------------------------------------- background monitor
@@ -2963,7 +3091,8 @@ def build_state():
         "settings": {"auto_sort": CONFIG.get("auto_sort", True), "date_folders": CONFIG.get("date_folders", True),
                      "autostart": get_autostart(), "windows": os.name == "nt",
                      "native_window": has_native_window(), "folders": CONFIG.get("folders"),
-                     "github_updates": CONFIG.get("github_updates", True), "live": CONFIG.get("live", True), "storage": storage_default()},
+                     "github_updates": CONFIG.get("github_updates", True), "live": CONFIG.get("live", True), "storage": storage_default(),
+                     "layout": CONFIG.get("layout", "tv")},
         "live": live_info(),
         "storage": storage_state(),
         "github": {"latest": GH["latest"], "error": GH["error"], "checked": GH["checked"], "busy": GH["busy"]},
@@ -3145,8 +3274,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path)
-        if u.path == "/":
-            data = ui_file("ui.html").encode("utf-8")
+        if u.path in ("/", "/tv", "/classic"):
+            page = "ui.html" if u.path == "/classic" or (u.path == "/" and CONFIG.get("layout") == "classic") else "tv.html"
+            data = ui_file(page).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
@@ -3456,11 +3586,345 @@ def has_native_window():
 
 
 def run_native_window():
-    """Real desktop window (pywebview / Edge WebView2). Blocks until the window is closed."""
+    """The TV layout: a small TV window with Library / Projects drawers, a message stack and stubs,
+    each its own borderless window that RotLab moves together. Falls back to one normal window."""
     import webview
-    webview.create_window("RotLab", "http://localhost:%d" % PORT,
-                          width=1320, height=900, min_size=(760, 560))
-    webview.start()
+    if CONFIG.get("layout") == "classic":
+        webview.create_window("RotLab", "http://localhost:%d/classic" % PORT, width=1320, height=900, min_size=(760, 560))
+        webview.start()
+        return
+    TVGroup(webview).run()
+
+
+class TVGroup:
+    """Python side of the TV layout. All geometry here is in CSS pixels as the TV page reports them;
+    K converts to pywebview's units (they differ on scaled displays)."""
+    TVW, TVB, BAR, STRIP = 336, 214, 24, 5
+    DRAWER = {"library": (470, 560), "projects": (500, 560)}
+    PARTS = ("tv", "library", "projects", "stack", "stubs")
+
+    def __init__(self, webview):
+        self.wv = webview
+        self.win = {}
+        self.k = 1.0
+        self.lock = threading.RLock()
+        pos = CONFIG.get("tv_pos") or [None, None]
+        self.tx, self.ty = pos[0], pos[1]  # top-left of the TV body (below the chat bar)
+        self.avail = None  # [x, y, w, h] work area of the TV's monitor
+        self.want = {"library": False, "projects": False, "chat": False, "stack": 0, "stubs": 0}
+        self.cur = {}  # part -> [x, y, w, h] currently applied (css px), or None
+        self.side = {"library": "left", "projects": "right"}
+        self.vup = True  # chat above the TV (stubs below)
+        self.expect = None
+        self.drag_t = 0
+        self.ready = False
+        self.on_top = CONFIG.get("on_top", True)
+
+    # ---- windows
+    def run(self):
+        wv = self.wv
+        api = TVApi(self)
+        x = int(self.tx * self.k) if self.tx is not None else None
+        y = int((self.ty - self.STRIP) * self.k) if self.ty is not None else None
+        common = dict(frameless=True, easy_drag=False, resizable=False, on_top=self.on_top, background_color="#2b2b2b",
+                      js_api=api, min_size=(4, 4))
+        self.win["tv"] = wv.create_window("RotLab", "http://localhost:%d/tv?part=tv" % PORT, width=self.TVW,
+                                          height=self.TVB + self.STRIP, x=x, y=y, **common)
+        for p in ("library", "projects", "stack", "stubs"):
+            w, h = self.DRAWER.get(p, (self.TVW, 40))
+            self.win[p] = wv.create_window("RotLab " + p, "http://localhost:%d/tv?part=%s" % (PORT, p), width=w, height=h,
+                                           hidden=True, **common)
+            self.cur[p] = None
+        self.win["tv"].events.closed += self.closed
+        wv.start()
+
+    def closed(self, *a):
+        for p, w in list(self.win.items()):
+            if p != "tv":
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
+
+    def js(self, part, code):
+        w = self.win.get(part)
+        if not w:
+            return None
+        try:
+            return w.evaluate_js(code)
+        except Exception:
+            return None
+
+    def send(self, part, msg):
+        parts = self.PARTS if part == "*" else [part]
+        for p in parts:
+            if p in self.win and (p == "tv" or part != "*" or self.cur.get(p)):
+                threading.Thread(target=self.js, args=(p, "window.rlMsg&&rlMsg(%s)" % json.dumps(msg)), daemon=True).start()
+
+    def hide_from_taskbar(self, part):
+        if os.name != "nt":
+            return
+        try:
+            import ctypes
+            u = ctypes.windll.user32
+            h = u.FindWindowW(None, "RotLab " + part)
+            if h:
+                ex = u.GetWindowLongW(h, -20)
+                u.SetWindowLongW(h, -20, (ex | 0x80) & ~0x40000)  # tool window, not app window
+        except Exception:
+            pass
+
+    # ---- geometry
+    def hello(self, g):
+        """First report from the TV page: its size in css px tells us the scale factor."""
+        with self.lock:
+            if g.get("iw"):
+                self.k = max(0.5, min(4.0, self.TVW / float(g["iw"])))
+            self.avail = g.get("avail")
+            if self.tx is None:
+                a = self.avail or [0, 0, 1280, 720]
+                self.tx, self.ty = a[0] + a[2] - self.TVW - 24, a[1] + 320
+            self.ready = True
+            self.layout(animate=False, move_tv=True)
+        return {"vup": self.vup, "side": self.side}
+
+    def tv_moved(self, sx, sy, avail):
+        """The TV page polls its own screen position; this follows a drag."""
+        with self.lock:
+            if self.expect and abs(sx - self.expect[0]) < 3 and abs(sy - self.expect[1]) < 3:
+                return
+            self.expect = None
+            bar = self.cur.get("tv", [0, 0, 0, 0])
+            off = (self.ty - bar[1]) if bar else self.STRIP
+            self.tx, self.ty = sx, sy + off
+            if avail:
+                self.avail = avail
+            self.compute()
+            # keep the window's top where the user put it, whichever side the chat bar is on
+            self.ty = sy + ((self.BAR if self.want["chat"] else self.STRIP) if self.vup else 0)
+            if bar:
+                self.cur["tv"] = [sx, sy, bar[2], bar[3]]
+            self.drag_t = time.time()
+            self.layout(animate=False, move_tv=False)
+        threading.Thread(target=self._snap_later, args=(self.drag_t,), daemon=True).start()
+
+    def _snap_later(self, t0):
+        time.sleep(0.45)
+        with self.lock:
+            if self.drag_t != t0 or not self.avail:
+                return
+            a = self.avail
+            x, y = self.tx, self.ty
+            t = self.cur.get("tv") or [x, y, self.TVW, self.TVB]
+            top, bottom = t[1], t[1] + t[3]
+            if abs(x - a[0]) < 28:
+                x = a[0]
+            if abs((x + self.TVW) - (a[0] + a[2])) < 28:
+                x = a[0] + a[2] - self.TVW
+            if abs(top - a[1]) < 28:
+                y += a[1] - top
+            if abs(bottom - (a[1] + a[3])) < 28:
+                y -= bottom - (a[1] + a[3])
+            x = max(a[0] - self.TVW + 60, min(x, a[0] + a[2] - 60))
+            y = max(a[1], min(y, a[1] + a[3] - 60))
+            self.tx, self.ty = x, y
+            CONFIG["tv_pos"] = [int(x), int(y)]
+            save_config()
+            self.layout(animate=True, move_tv=True)
+
+    def set_want(self, w):
+        with self.lock:
+            changed = {k for k, v in w.items() if self.want.get(k) != v}
+            self.want.update({k: v for k, v in w.items() if k in self.want})
+            if changed and self.ready:
+                self.layout(animate=True, move_tv=bool(changed & {"chat"}), changed=changed)
+
+    def compute(self):
+        a = self.avail or [0, 0, 1920, 1040]
+        ax, ay, aw, ah = a
+        x, y = self.tx, self.ty
+        space_up, space_down = y - ay, (ay + ah) - (y + self.TVB)
+        self.vup = space_up >= 220 or space_up >= space_down
+        bar = self.BAR if self.want["chat"] else self.STRIP
+        r = {}
+        r["tv"] = [x, y - bar, self.TVW, self.TVB + bar] if self.vup else [x, y, self.TVW, self.TVB + bar]
+        sh = int(self.want["stack"] or 0)
+        if sh > 0:
+            r["stack"] = [x + 18, r["tv"][1] - sh, self.TVW - 36, sh] if self.vup else [x + 18, r["tv"][1] + r["tv"][3], self.TVW - 36, sh]
+        else:
+            r["stack"] = None
+        bh = int(self.want["stubs"] or 0)
+        if bh > 0:
+            if self.vup:
+                r["stubs"] = [x + 24, y + self.TVB, self.TVW - 48, bh]
+            elif space_up >= bh:
+                r["stubs"] = [x + 24, y - bh, self.TVW - 48, bh]
+            else:  # no room above: hang them under the message stack
+                below = r["tv"][1] + r["tv"][3] + (sh if sh > 0 else 0)
+                r["stubs"] = [x + 24, below, self.TVW - 48, bh]
+        else:
+            r["stubs"] = None
+        left_room, right_room = x - ax, (ax + aw) - (x + self.TVW)
+        sides = {}
+        for p, pref in (("library", "left"), ("projects", "right")):
+            if not self.want[p]:
+                continue
+            w = self.DRAWER[p][0]
+            room = {"left": left_room, "right": right_room}
+            other = "right" if pref == "left" else "left"
+            sides[p] = pref if room[pref] >= w or room[pref] >= room[other] else other
+        # both on one side: the library sits next to the TV, projects beyond it
+        r["library"] = r["projects"] = None
+        offs = {"left": x, "right": x + self.TVW}
+        for p in ("library", "projects"):
+            if p not in sides:
+                continue
+            w, h = self.DRAWER[p]
+            sd = sides[p]
+            dy = max(ay, min(y - 30, ay + ah - h))
+            if sd == "left":
+                offs["left"] -= w
+                r[p] = [offs["left"], dy, w, h]
+            else:
+                r[p] = [offs["right"], dy, w, h]
+                offs["right"] += w
+            self.side[p] = sd
+        return r
+
+    def apply(self, part, rect):
+        w = self.win[part]
+        k = self.k
+        if rect is None:
+            if self.cur.get(part):
+                try:
+                    w.hide()
+                except Exception:
+                    pass
+            self.cur[part] = None
+            return
+        x, y, ww, hh = [int(round(v * k)) for v in rect]
+        try:
+            if part == "tv":
+                self.expect = (rect[0], rect[1])
+            w.resize(max(4, ww), max(4, hh))
+            w.move(x, y)
+            if part != "tv" and not self.cur.get(part):
+                w.show()
+                self.hide_from_taskbar(part)
+        except Exception as e:
+            print("window", part, e)
+        self.cur[part] = list(rect)
+
+    def layout(self, animate=False, move_tv=False, changed=()):
+        r = self.compute()
+        msg = {"t": "layout", "vup": self.vup, "side": dict(self.side), "chat": self.want["chat"]}
+        if msg != getattr(self, "_sent", None):
+            self._sent = msg
+            for p in self.PARTS:
+                self.send(p, msg)
+        steps = 5 if animate else 1
+        drawers = [p for p in ("library", "projects") if p in changed]
+        for i in range(1, steps + 1):
+            f = i / float(steps)
+            for p in self.PARTS:
+                rect = r.get(p)
+                if p == "tv" and not move_tv and self.cur.get("tv") and rect and [int(v) for v in rect] == [int(v) for v in self.cur["tv"]]:
+                    continue
+                if p in drawers and animate:
+                    if rect is None:  # folding away: shrink towards the TV, then hide
+                        old = self.cur.get(p)
+                        if not old:
+                            continue
+                        if i == steps:
+                            self.apply(p, None)
+                            continue
+                        ww = max(8, old[2] * (1 - f))
+                        rr = [old[0] + old[2] - ww if self.side[p] == "left" else old[0], old[1], ww, old[3]]
+                        self._move_only(p, rr)
+                        continue
+                    ww = max(8, rect[2] * f)
+                    rr = [rect[0] + rect[2] - ww if self.side[p] == "left" else rect[0], rect[1], ww, rect[3]]
+                    if i == steps:
+                        rr = rect
+                    self.apply(p, rr)
+                    continue
+                if i == steps or not animate:
+                    if rect != self.cur.get(p):
+                        self.apply(p, rect)
+            if animate and i < steps:
+                time.sleep(0.05)
+
+    def _move_only(self, part, rect):
+        k = self.k
+        x, y, ww, hh = [int(round(v * k)) for v in rect]
+        try:
+            self.win[part].resize(max(4, ww), max(4, hh))
+            self.win[part].move(x, y)
+        except Exception:
+            pass
+        self.cur[part] = list(rect)
+
+
+class TVApi:
+    """Called from the pages as window.pywebview.api.*"""
+
+    def __init__(self, g):
+        self._g = g
+
+    def hello(self, g):
+        return self._g.hello(g or {})
+
+    def moved(self, sx, sy, avail=None):
+        self._g.tv_moved(sx, sy, avail)
+
+    def want(self, w):
+        threading.Thread(target=self._g.set_want, args=(w or {},), daemon=True).start()
+
+    def send(self, part, msg):
+        self._g.send(part, msg)
+
+    def on_top(self, v):
+        g = self._g
+        g.on_top = bool(v)
+        CONFIG["on_top"] = g.on_top
+        save_config()
+        for w in g.win.values():
+            try:
+                w.on_top = g.on_top
+            except Exception:
+                pass
+
+    def minimize(self):
+        for p, w in self._g.win.items():
+            try:
+                if p == "tv":
+                    w.minimize()
+                elif self._g.cur.get(p):
+                    w.hide()
+                    self._g.cur[p] = None
+            except Exception:
+                pass
+        self._g.want.update({"library": False, "projects": False})
+        self._g.send("tv", {"t": "minimized"})
+
+    def close(self):
+        try:
+            self._g.win["tv"].destroy()
+        except Exception:
+            pass
+
+    def classic(self, hash_=""):
+        url = "http://localhost:%d/classic%s" % (PORT, ("#" + hash_) if hash_ else "")
+        w = self._g.win.get("classic")
+        try:
+            if w:
+                w.load_url(url)
+                w.show()
+                w.restore()
+                return
+        except Exception:
+            pass
+        self._g.win["classic"] = self._g.wv.create_window("RotLab (full window)", url, width=1320, height=900, min_size=(760, 560))
 
 
 def show_window():

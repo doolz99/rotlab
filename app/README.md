@@ -2,7 +2,17 @@
 
 One window for your shared VEGAS project: a media library for the project folder, notes and tags on files, project history, chat, and a log of what changed. The folder stays in sync between both PCs.
 
-## The window
+## The TV (4.0)
+RotLab now opens as a small **TV** window that you can put anywhere. Everything else folds out of it:
+- **◂ Library** (left side button): the shared library. Search, filter by kind, see what each file is **used in**. Click files to select them, then **Add to <project>** (or press Enter). Dragging them onto the Projects drawer works too.
+- **Projects ▸** (right side button): the project file, what it **uses from the Library** (and whether that's on this PC), files only in that project, renders, and open requests.
+- **Chat** hides behind the top of the TV. A yellow strip blinks when there's something unread, and new messages show for a few seconds. Move the mouse to the top of the TV to type; move up into the messages and more unfold. You see each other's words as they're typed (turn off in the ☰ menu).
+- **Stubs** hang under the TV for things waiting on you. Click one to open it, × to clear it.
+- **Drop files** on the Library button (or the TV) to file them; on the Projects button to pick a project.
+- Drag the TV by its title bar. Near a screen edge it snaps there; drawers open towards the side with room, and the chat flips under the TV if it's near the top.
+- ☰ menu: the full window (settings, sync, phone, requests, outline, Find online), keep on top, sounds, or go back to the old one-window layout.
+
+## The full window
 - **Left:** Video · Audio · Images · Graphics · Renders · Project · Inbox, with how many files are in each.
 - **Middle:** the files, newest first, with a thumbnail, length, tags, who added them and how many notes they have. Click a file to preview it, tag it, read and add notes, open it, or show it in its folder. Double-click opens it.
 - **Project (.veg) files:** **History...** lists every save (who and when). **Restore** brings an older one back, and the current one is kept too.
