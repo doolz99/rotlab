@@ -575,7 +575,10 @@ function animDrawer(k,on){clearInterval(G.anim[k]);const target=on?1:0;
  G.anim[k]=setInterval(()=>{const f=G.open[k];const n=on?Math.min(1,f+0.2):Math.max(0,f-0.2);G.open[k]=n;deskLayout();if(n===target)clearInterval(G.anim[k])},45)}
 function deskLayout(){if(!DESK||!G.ready)return;
  const vw=window.innerWidth,vh=window.innerHeight,bar=DESKW.chat?24:5;
- if(G.tvx===null){const p=LS.get("tvpos",null);if(p&&p[0]>=0&&p[1]>=0&&p[0]<vw-60&&p[1]<vh-60){G.tvx=p[0];G.tvy=p[1]}else{G.tvx=Math.round((vw-TVW)/2);G.tvy=Math.round(vh*0.42)}}
+ if(vw<500||vh<400)return; /* window not sized yet */
+ if(G.tvx===null||(!G.placed&&(G.vw!==vw||G.vh!==vh))){const p=LS.get("tvpos",null);
+  if(p&&p[0]>=0&&p[1]>=0&&p[0]<vw-60&&p[1]<vh-60){G.tvx=p[0];G.tvy=p[1];G.placed=true}else{G.tvx=Math.round((vw-TVW)/2);G.tvy=Math.round(vh*0.42)}}
+ G.vw=vw;G.vh=vh;
  G.tvx=Math.max(-TVW+80,Math.min(G.tvx,vw-80));G.tvy=Math.max(bar,Math.min(G.tvy,vh-60));
  const x=G.tvx,y=G.tvy,up=y,down=vh-(y+TB);
  const vup=up>=220||up>=down;if(vup!==G.vup||!document.body._lay){G.vup=vup}
@@ -620,7 +623,7 @@ function initDrag(){const t=$("tvTitle");let sx,sy,bx,by,moved=false;
   const top=G.vup?G.tvy-bar:G.tvy,bottom=top+TB+bar;
   if(Math.abs(G.tvx)<S)G.tvx=0;if(Math.abs(G.tvx+TVW-vw)<S)G.tvx=vw-TVW;
   if(Math.abs(top)<S)G.tvy+=-top;if(Math.abs(bottom-vh)<S)G.tvy-=bottom-vh;
-  LS.set("tvpos",[Math.round(G.tvx),Math.round(G.tvy)]);deskLayout();snd("tick")};
+  G.placed=true;LS.set("tvpos",[Math.round(G.tvx),Math.round(G.tvy)]);deskLayout();snd("tick")};
  t.addEventListener("pointerup",end);t.addEventListener("pointercancel",end)}
 /* ---------- start ---------- */
 const inits={tv:initTV,stack:initStack,stubs:initStubs,library:initLibrary,projects:initProjects};
@@ -634,7 +637,9 @@ let uiHash=null,fails=0;
 stateListeners.push(()=>{fails=0;if(uiHash===null)uiHash=S.ui;else if(S.ui&&S.ui!==uiHash&&!(document.activeElement&&/INPUT|TEXTAREA/.test(document.activeElement.tagName)))location.reload()});
 setInterval(async()=>{try{const r=await fetch("/preview?path=ping");if(r.ok||r.status<500){fails=0;return}}catch(e){}if(++fails>=15&&TAURI_API)TAURI_API.close()},2500);
 /* test hook used by the Windows build check */
-if(new URLSearchParams(location.search).get("test")==="1"){setTimeout(()=>{$("bLib").click();$("bProj").click()},4000);setTimeout(()=>$("strip").dispatchEvent(new MouseEvent("mouseenter")),6000)}
+if(new URLSearchParams(location.search).get("test")==="1"){
+ const rep=tag=>api("/api/debug",{tag,iw:innerWidth,ih:innerHeight,dpr:devicePixelRatio,sx:screen.width,sy:screen.height,G:{tvx:G.tvx,tvy:G.tvy,vup:G.vup,open:G.open,ready:G.ready},DESKW,reg:lastReg,lay:document.body._lay,tauri:!!TAURI_API,ua:navigator.userAgent}).catch(()=>{});
+ setTimeout(()=>rep("3s"),3000);setTimeout(()=>rep("10s"),10000);setTimeout(()=>{$("bLib").click();$("bProj").click()},4000);setTimeout(()=>$("strip").dispatchEvent(new MouseEvent("mouseenter")),6000)}
 (async()=>{if(PART!=="stack"||DESK){await loadState()}if(POLL[PART])setInterval(()=>{if(PART==="library"||PART==="projects"){if(document.visibilityState==="hidden")return}loadState()},POLL[PART])})();
 </script>
 </body></html>

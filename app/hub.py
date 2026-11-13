@@ -1930,6 +1930,9 @@ def ws_post(path, body):
     if path == "/api/online/add":
         it = b.get("item") or {}
         return 200, {"ok": True, "job": online_add(it, b.get("pid") or current_project(), b.get("res"))}
+    if path == "/api/debug":
+        print("page debug:", json.dumps(body)[:2000])
+        return 200, {"ok": True}
     if path == "/api/layout":
         CONFIG["layout"] = "classic" if b.get("layout") == "classic" else "tv"
         save_config()
