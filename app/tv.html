@@ -130,6 +130,7 @@ body.vdown .stub.slide{animation-name:slideup}
 /* ---------- desk mode ---------- */
 body.desk #P_tv{width:336px}
 body.float{background:#2b2b2b}
+html:has(body.see),body.see{background:transparent!important}
 body.desk #P_library,body.desk #P_projects{overflow:hidden;width:0}
 body.desk #P_library .dwrap,body.desk #P_projects .dwrap{height:100%}
 #tvTitle{cursor:move}#tvTitle button{cursor:pointer}
@@ -212,7 +213,10 @@ function colorOf(u){if(S&&u===S.me)return"#b48cff";let h=0;for(const c of String
 
 /* ---------- talking to Python (windows) or to the other parts (desk) ---------- */
 let pyReady=null;
-const py=()=>pyReady||(pyReady=new Promise(res=>{if(window.pywebview&&window.pywebview.api)return res(window.pywebview.api);window.addEventListener("pywebviewready",()=>res(window.pywebview.api));if(!(window.chrome&&window.chrome.webview)&&!window.pywebview)res(null);setTimeout(()=>res(window.pywebview?window.pywebview.api:null),4000)}));
+const TAURI=window.__TAURI__&&window.__TAURI__.core;
+const TAURI_API=TAURI?{ready:()=>TAURI.invoke("ready"),region:(rects,dpr)=>TAURI.invoke("region",{rects,dpr}),minimize:()=>TAURI.invoke("minimize"),
+ close:()=>TAURI.invoke("close"),on_top:v=>TAURI.invoke("on_top",{v}),classic:hash=>TAURI.invoke("classic",{hash:hash||""})}:null;
+const py=()=>pyReady||(pyReady=new Promise(res=>{if(TAURI_API)return res(TAURI_API);if(window.pywebview&&window.pywebview.api)return res(window.pywebview.api);window.addEventListener("pywebviewready",()=>res(window.pywebview.api));if(!(window.chrome&&window.chrome.webview)&&!window.pywebview)res(null);setTimeout(()=>res(window.pywebview?window.pywebview.api:null),4000)}));
 const HANDLERS={};
 function bus(part,msg){if(DESK){const parts=part==="*"?Object.keys(HANDLERS):[part];for(const p of parts)if(HANDLERS[p])setTimeout(()=>HANDLERS[p](msg),0);return}
  py().then(a=>{if(a)a.send(part,msg)})}
@@ -561,8 +565,9 @@ function initProjects(){let pid=null,V=null,last=0,gen=-1;
    Desk mode: everything in one window (when separate windows aren't available)
    ===================================================================================== */
 const DESKW={library:false,projects:false,chat:false,stack:0,stubs:0};
-const FLOAT=new URLSearchParams(location.search).get("float")==="1";
-if(FLOAT)document.body.classList.add("float");
+const FLOATQ=new URLSearchParams(location.search).get("float");
+const FLOAT=FLOATQ==="1"||FLOATQ==="2";
+if(FLOAT)document.body.classList.add(FLOATQ==="2"?"see":"float");
 const G={tvx:null,tvy:null,vup:true,open:{library:0,projects:0},anim:{},ready:!FLOAT,dragging:false};
 const DW={library:470,projects:500},DH=560,TVW=336,TB=214;
 /* drawers slide out of the TV in a few chunky steps */
@@ -624,6 +629,12 @@ if(DESK){for(const k in inits)inits[k]();initDrag();window.addEventListener("res
  new MutationObserver(()=>{if(DESK)deskLayout()}).observe($("P_stubs"),{childList:true});new MutationObserver(()=>sendRegion()).observe($("stk"),{childList:true,subtree:true})}
 else if(inits[PART])inits[PART]();
 const POLL={tv:2500,stubs:4000,library:5000,projects:5000,stack:0,desk:2500};
+/* reload when RotLab updates; close the see-through window if RotLab itself has stopped */
+let uiHash=null,fails=0;
+stateListeners.push(()=>{fails=0;if(uiHash===null)uiHash=S.ui;else if(S.ui&&S.ui!==uiHash&&!(document.activeElement&&/INPUT|TEXTAREA/.test(document.activeElement.tagName)))location.reload()});
+setInterval(async()=>{try{const r=await fetch("/preview?path=ping");if(r.ok||r.status<500){fails=0;return}}catch(e){}if(++fails>=15&&TAURI_API)TAURI_API.close()},2500);
+/* test hook used by the Windows build check */
+if(new URLSearchParams(location.search).get("test")==="1"){setTimeout(()=>{$("bLib").click();$("bProj").click()},4000);setTimeout(()=>$("strip").dispatchEvent(new MouseEvent("mouseenter")),6000)}
 (async()=>{if(PART!=="stack"||DESK){await loadState()}if(POLL[PART])setInterval(()=>{if(PART==="library"||PART==="projects"){if(document.visibilityState==="hidden")return}loadState()},POLL[PART])})();
 </script>
 </body></html>

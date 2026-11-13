@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "4.1.2"
+HUB_VERSION = "4.2"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -3586,22 +3586,13 @@ def has_native_window():
 
 
 def run_native_window():
-    """The TV layout: one borderless window as big as the screen's work area, clipped (SetWindowRgn) to the
-    parts that are showing - the TV, open drawers, messages, stubs. Everything else is click-through.
-    Falls back to an ordinary window with the same layout when that isn't possible."""
+    """pywebview fallback: the old one-window layout, or the TV layout inside an ordinary window."""
     import webview
     if CONFIG.get("layout") == "classic":
         webview.create_window("RotLab", "http://localhost:%d/classic" % PORT, width=1320, height=900, min_size=(760, 560))
-        _wv_start(webview)
-        return
-    if os.name == "nt":
-        try:
-            FloatWin(webview).run()
-            return
-        except Exception as e:
-            print("floating window failed, using a normal window:", repr(e))
-    webview.create_window("RotLab", "http://localhost:%d/tv" % PORT, width=1340, height=860, min_size=(900, 640),
-                          background_color="#1d2a2c", js_api=FloatApi(None))
+    else:
+        webview.create_window("RotLab", "http://localhost:%d/tv" % PORT, width=1340, height=860, min_size=(900, 640),
+                              background_color="#1d2a2c", js_api=FloatApi(None))
     _wv_start(webview)
 
 
@@ -3612,192 +3603,81 @@ def _wv_start(webview):
         webview.start()
 
 
-class FloatWin:
-    TITLE = "RotLab TV"
+# ---------------------------------------------------------------- RotLab TV (see-through window, built on GitHub)
+def shell_info():
+    m = read_json(os.path.join(APP_DIR, "manifest.json"), {}) or {}
+    return m.get("shell") or {}
 
-    def __init__(self, webview):
-        self.wv = webview
-        self.win = None
-        self.hwnd = None
-        self.shown = False
-        self.work = None
-        self.lock = threading.Lock()
 
-    def run(self):
-        import ctypes
-        try:  # physical pixels everywhere, so the clip region lines up on scaled displays
-            ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+def shell_exe(download=True):
+    """Path of RotLabTV.exe for this version, downloading it once from the GitHub release if needed."""
+    if os.name != "nt":
+        return None
+    info = shell_info()
+    ver, url = info.get("version"), info.get("url")
+    if not ver or not url:
+        return None
+    d = os.path.join(os.path.dirname(config_file()), "shell")
+    exe = os.path.join(d, "RotLabTV-%s.exe" % ver)
+    if os.path.isfile(exe):
+        return exe
+    if not download:
+        return None
+    try:
+        os.makedirs(d, exist_ok=True)
+        print("downloading RotLab TV", ver)
+        req = urllib.request.Request(url, headers={"User-Agent": "RotLab"})
+        tmp = exe + ".part"
+        with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as fh:
+            shutil.copyfileobj(r, fh)
+        if os.path.getsize(tmp) < 500000:
+            raise ValueError("download too small")
+        os.replace(tmp, exe)
+        for f in os.listdir(d):  # old versions
+            if f.startswith("RotLabTV-") and f.endswith(".exe") and f != os.path.basename(exe):
+                try:
+                    os.remove(os.path.join(d, f))
+                except OSError:
+                    pass
+        return exe
+    except Exception as e:
+        print("RotLab TV download failed:", repr(e))
+        return None
+
+
+def stop_shell(keep=None):
+    """Close running RotLab TV windows (other versions, or all)."""
+    if os.name != "nt":
+        return
+    d = os.path.join(os.path.dirname(config_file()), "shell")
+    try:
+        names = [f for f in os.listdir(d) if f.startswith("RotLabTV-") and f.endswith(".exe")]
+    except OSError:
+        names = []
+    for n in set(names + ["RotLabTV-%s.exe" % shell_info().get("version")]):
+        if keep and n == os.path.basename(keep):
+            continue
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", n], capture_output=True, timeout=10, creationflags=0x08000000)
         except Exception:
-            try:
-                ctypes.windll.shcore.SetProcessDpiAwareness(2)
-            except Exception:
-                pass
-        # starts visible but off screen (a hidden window may never load its page); ready() then moves it
-        self.win = self.wv.create_window(self.TITLE, "http://localhost:%d/tv?float=1" % PORT, width=900, height=600,
-                                         x=-20000, y=-20000, frameless=True, easy_drag=False,
-                                         on_top=CONFIG.get("on_top", True), background_color="#2b2b2b", js_api=FloatApi(self))
-        self.t0 = time.time()
-        try:
-            self.wv.start(self.watchdog, private_mode=False)
-        except TypeError:
-            self.wv.start(self.watchdog)
+            pass
 
-    def watchdog(self):
-        """Never leave the user with nothing on screen: if the clipped window isn't up after a few
-        seconds, turn it into an ordinary window in the middle of the screen."""
-        time.sleep(9)
-        if self.shown:
-            return
-        print("floating window did not come up (ready=%s), showing a normal window" % bool(self.work))
-        self.fallback()
 
-    def fallback(self):
-        import ctypes
-        self.shown = True
-        self.fell = True
-        try:
-            form = getattr(self.win, "native", None)
-            if form is not None and hasattr(form, "Invoke"):
-                from System import Action
-
-                def clear():
-                    form.Region = None
-                form.Invoke(Action(clear))
-        except Exception as e:
-            print("fallback form region:", repr(e))
-        try:
-            h = self._hwnd()
-            if h:
-                from ctypes import wintypes
-                ctypes.windll.user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
-                ctypes.windll.user32.SetWindowRgn(h, None, True)
-        except Exception as e:
-            print("fallback region:", repr(e))
-        try:
-            self.win.resize(1340, 860)
-            self.win.move(80, 60)
-            self.win.show()
-        except Exception as e:
-            print("fallback move:", repr(e))
-
-    def _hwnd(self):
-        if self.hwnd:
-            return self.hwnd
-        import ctypes
-        try:
-            h = int(self.win.native.Handle.ToInt64())
-        except Exception:
-            ctypes.windll.user32.FindWindowW.restype = ctypes.c_void_p
-            h = ctypes.windll.user32.FindWindowW(None, self.TITLE)
-        if h:
-            try:  # make sure it's the top-level window, not the web view inside it
-                ga = ctypes.windll.user32.GetAncestor
-                ga.restype = ctypes.c_void_p
-                ga.argtypes = [ctypes.c_void_p, ctypes.c_uint]
-                h = ga(ctypes.c_void_p(h), 2) or h  # GA_ROOT
-            except Exception:
-                pass
-        self.hwnd = h or None
-        print("floating window handle", self.hwnd)
-        return self.hwnd
-
-    def ready(self):
-        """Cover the work area (the screen minus the taskbar) of the monitor RotLab was last on."""
-        import ctypes
-        from ctypes import wintypes
-        h = self._hwnd()
-        if not h:
-            raise RuntimeError("no window handle")
-
-        class MI(ctypes.Structure):
-            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
-        u = ctypes.windll.user32
-        u.MonitorFromPoint.restype = wintypes.HMONITOR
-        u.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
-        u.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.c_void_p]
-        u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
-        mon_pt = CONFIG.get("tv_monitor") or [0, 0]
-        mon = u.MonitorFromPoint(wintypes.POINT(int(mon_pt[0]), int(mon_pt[1])), 1)  # nearest, else primary
-        mi = MI()
-        mi.cbSize = ctypes.sizeof(MI)
-        u.GetMonitorInfoW(mon, ctypes.byref(mi))
-        r = mi.rcWork
-        self.work = [r.left, r.top, r.right - r.left, r.bottom - r.top]
-        # empty region first so nothing flashes, then move/size to the work area
-        self._set_region([])
-        print("floating window: work area", self.work)
-        u.SetWindowPos(h, 0, r.left, r.top, r.right - r.left, r.bottom - r.top, 0x0010 | 0x0004)  # NOACTIVATE|NOZORDER
-        return {"ok": True, "work": self.work}
-
-    def _set_region(self, rects):
-        import ctypes
-        from ctypes import wintypes
-        g = ctypes.windll.gdi32
-        u = ctypes.windll.user32
-        g.CreateRectRgn.restype = wintypes.HRGN
-        g.CreateRectRgn.argtypes = [ctypes.c_int] * 4
-        g.CombineRgn.argtypes = [wintypes.HRGN, wintypes.HRGN, wintypes.HRGN, ctypes.c_int]
-        g.DeleteObject.argtypes = [wintypes.HGDIOBJ]
-        u.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
-        h = self._hwnd()
-        rgn = g.CreateRectRgn(0, 0, 0, 0)
-        for x, y, w, hh in rects:
-            if w <= 0 or hh <= 0:
-                continue
-            part = g.CreateRectRgn(int(x), int(y), int(x + w), int(y + hh))
-            g.CombineRgn(rgn, rgn, part, 2)  # RGN_OR
-            g.DeleteObject(part)
-        if not u.SetWindowRgn(h, rgn, True):  # the window owns rgn from here on
-            g.DeleteObject(rgn)
-            raise RuntimeError("SetWindowRgn failed")
-
-    def _form_region(self, rects):
-        """Set the clip through WinForms itself (pywebview's window is a WinForms Form)."""
-        form = getattr(self.win, "native", None)
-        if form is None or not hasattr(form, "Invoke"):
-            return False
-        from System import Action  # noqa (pythonnet, used by pywebview on Windows)
-        from System.Drawing import Rectangle, Region
-
-        def apply():
-            reg = Region(Rectangle(0, 0, 0, 0))
-            for x, y, w, h in rects:
-                if w > 0 and h > 0:
-                    reg.Union(Rectangle(int(x), int(y), int(w), int(h)))
-            form.Region = reg
-        form.Invoke(Action(apply))
+def run_shell():
+    if CONFIG.get("layout") == "classic":
+        return False
+    exe = shell_exe()
+    if not exe:
+        return False
+    stop_shell(keep=exe)  # an older RotLab TV would otherwise stay open instead of this one
+    try:
+        args = [exe, "--port", str(PORT)] + ([] if CONFIG.get("on_top", True) else ["--not-on-top"])
+        subprocess.Popen(args, cwd=os.path.dirname(exe))
+        print("started RotLab TV")
         return True
-
-    def _region_ok(self):
-        import ctypes
-        from ctypes import wintypes
-        u = ctypes.windll.user32
-        u.GetWindowRgnBox.argtypes = [wintypes.HWND, ctypes.c_void_p]
-        rc = wintypes.RECT()
-        kind = u.GetWindowRgnBox(self._hwnd(), ctypes.byref(rc))
-        return kind in (2, 3), (kind, rc.left, rc.top, rc.right, rc.bottom)
-
-    def region(self, rects, dpr):
-        with self.lock:
-            d = float(dpr or 1)
-            px = [[round(v * d) for v in r] for r in rects]
-            done = False
-            try:
-                done = self._form_region(px)
-            except Exception as e:
-                print("form region:", repr(e))
-            if not done:
-                self._set_region(px)
-            ok, info = self._region_ok()
-            if not ok and done:
-                self._set_region(px)
-                ok, info = self._region_ok()
-            if not self.shown:
-                print("floating window region:", ok, info, "parts:", len(rects), "dpr:", d)
-                if not ok:  # never leave a screen-sized grey window up
-                    self.fallback()
-                    return
-                self.shown = True
+    except Exception as e:
+        print("RotLab TV failed to start:", repr(e))
+        return False
 
 
 class FloatApi:
@@ -3869,6 +3749,8 @@ class FloatApi:
 
 
 def show_window():
+    if run_shell():
+        return True
     if has_native_window():
         try:
             run_native_window()

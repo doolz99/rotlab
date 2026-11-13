@@ -1,0 +1,7 @@
+{
+  "identifier": "main",
+  "description": "The TV page is served by RotLab's own hub on this PC",
+  "windows": ["*"],
+  "remote": { "urls": ["http://localhost:*/*", "http://127.0.0.1:*/*"] },
+  "permissions": ["core:default"]
+}
