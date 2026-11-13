@@ -1,6 +1,6 @@
 [package]
 name = "rotlab-tv"
-version = "4.2.0"
+version = "4.2.1"
 edition = "2021"
 description = "RotLab TV window"
 

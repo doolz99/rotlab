@@ -1,6 +1,6 @@
 {
   "productName": "RotLab TV",
-  "version": "4.2.0",
+  "version": "4.2.1",
   "identifier": "com.doolz99.rotlab",
   "build": { "frontendDist": "../dist" },
   "app": {
