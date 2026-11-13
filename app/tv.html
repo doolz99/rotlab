@@ -213,7 +213,8 @@ function colorOf(u){if(S&&u===S.me)return"#b48cff";let h=0;for(const c of String
 
 /* ---------- talking to Python (windows) or to the other parts (desk) ---------- */
 let pyReady=null;
-const TAURI=window.__TAURI__&&window.__TAURI__.core;
+const TAURI=(window.__TAURI__&&window.__TAURI__.core)||(window.__TAURI_INTERNALS__&&{invoke:(c,a)=>window.__TAURI_INTERNALS__.invoke(c,a)});
+let shellErr="";
 const TAURI_API=TAURI?{ready:()=>TAURI.invoke("ready"),region:(rects,dpr)=>TAURI.invoke("region",{rects,dpr}),minimize:()=>TAURI.invoke("minimize"),
  close:()=>TAURI.invoke("close"),on_top:v=>TAURI.invoke("on_top",{v}),classic:hash=>TAURI.invoke("classic",{hash:hash||""})}:null;
 const py=()=>pyReady||(pyReady=new Promise(res=>{if(TAURI_API)return res(TAURI_API);if(window.pywebview&&window.pywebview.api)return res(window.pywebview.api);window.addEventListener("pywebviewready",()=>res(window.pywebview.api));if(!(window.chrome&&window.chrome.webview)&&!window.pywebview)res(null);setTimeout(()=>res(window.pywebview?window.pywebview.api:null),4000)}));
@@ -613,7 +614,7 @@ function sendRegion(){if(!FLOAT)return;clearTimeout(regT);regT=setTimeout(()=>{
  add($("P_tv"));if(G.open.library>0)add($("P_library"));if(G.open.projects>0)add($("P_projects"));
  if(DESKW.stack)add($("stk"));for(const s of $("P_stubs").children)add(s);
  if($("menu").classList.contains("show"))add($("menu"));if($("dlg").classList.contains("show"))add($("dlg"));if($("toast").style.display==="block")add($("toast"));
- const key=JSON.stringify(rs);if(key===lastReg)return;lastReg=key;py().then(a=>a&&a.region(rs,window.devicePixelRatio||1))},16)}
+ const key=JSON.stringify(rs);if(key===lastReg)return;lastReg=key;py().then(a=>a&&Promise.resolve(a.region(rs,window.devicePixelRatio||1)).catch(e=>{shellErr="region: "+e}))},16)}
 /* drag the TV by its title bar (the whole group follows); snaps to the screen edges */
 function initDrag(){const t=$("tvTitle");let sx,sy,bx,by,moved=false;
  t.addEventListener("pointerdown",e=>{if(e.button!==0||e.target.closest("button"))return;t.setPointerCapture(e.pointerId);sx=e.clientX;sy=e.clientY;bx=G.tvx;by=G.tvy;moved=false;G.dragging=true;document.body.classList.add("dragging")});
@@ -628,7 +629,9 @@ function initDrag(){const t=$("tvTitle");let sx,sy,bx,by,moved=false;
 /* ---------- start ---------- */
 const inits={tv:initTV,stack:initStack,stubs:initStubs,library:initLibrary,projects:initProjects};
 if(DESK){for(const k in inits)inits[k]();initDrag();window.addEventListener("resize",deskLayout);
- if(FLOAT)py().then(async a=>{const r=a?await a.ready():null;G.ready=true;if(!r||!r.ok){document.body.classList.remove("float")}setTimeout(deskLayout,120)});else deskLayout();
+ if(FLOAT){const go=()=>{if(G.ready)return;G.ready=true;setTimeout(deskLayout,60)};setTimeout(go,5000);
+  py().then(async a=>{let r=null;try{r=a?await a.ready():null}catch(e){shellErr=String(e)}if(!r||!r.ok)document.body.classList.remove("float");go()})}
+ else deskLayout();
  new MutationObserver(()=>{if(DESK)deskLayout()}).observe($("P_stubs"),{childList:true});new MutationObserver(()=>sendRegion()).observe($("stk"),{childList:true,subtree:true})}
 else if(inits[PART])inits[PART]();
 const POLL={tv:2500,stubs:4000,library:5000,projects:5000,stack:0,desk:2500};
@@ -638,7 +641,7 @@ stateListeners.push(()=>{fails=0;if(uiHash===null)uiHash=S.ui;else if(S.ui&&S.ui
 setInterval(async()=>{try{const r=await fetch("/preview?path=ping");if(r.ok||r.status<500){fails=0;return}}catch(e){}if(++fails>=15&&TAURI_API)TAURI_API.close()},2500);
 /* test hook used by the Windows build check */
 if(new URLSearchParams(location.search).get("test")==="1"){
- const rep=tag=>api("/api/debug",{tag,iw:innerWidth,ih:innerHeight,dpr:devicePixelRatio,sx:screen.width,sy:screen.height,G:{tvx:G.tvx,tvy:G.tvy,vup:G.vup,open:G.open,ready:G.ready},DESKW,reg:lastReg,lay:document.body._lay,tauri:!!TAURI_API,ua:navigator.userAgent}).catch(()=>{});
+ const rep=tag=>api("/api/debug",{tag,iw:innerWidth,ih:innerHeight,dpr:devicePixelRatio,sx:screen.width,sy:screen.height,G:{tvx:G.tvx,tvy:G.tvy,vup:G.vup,open:G.open,ready:G.ready},DESKW,reg:lastReg,lay:document.body._lay,tauri:!!TAURI_API,g:typeof window.__TAURI__,gi:typeof window.__TAURI_INTERNALS__,err:shellErr,ua:navigator.userAgent}).catch(()=>{});
  setTimeout(()=>rep("3s"),3000);setTimeout(()=>rep("10s"),10000);setTimeout(()=>{$("bLib").click();$("bProj").click()},4000);setTimeout(()=>$("strip").dispatchEvent(new MouseEvent("mouseenter")),6000)}
 (async()=>{if(PART!=="stack"||DESK){await loadState()}if(POLL[PART])setInterval(()=>{if(PART==="library"||PART==="projects"){if(document.visibilityState==="hidden")return}loadState()},POLL[PART])})();
 </script>

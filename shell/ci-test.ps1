@@ -10,7 +10,7 @@ Copy-Item -Recurse -Force app "$root\_hub\app"
 '{"name":"Abdullah","phone_uploads":false,"github_updates":false,"live":false}' | Set-Content "$ci\ad\VegasHub\config.json"
 Copy-Item app\hub.ico "$root\Shared\logo.ico"
 [IO.File]::WriteAllBytes("$root\Shared\Sounds\whoosh_03.wav", [byte[]](0..2000 | % { 0 }))
-$env:APPDATA = "$ci\ad"; $env:HUB_NO_BROWSER = "1"; $env:HUB_ROOT = $root
+$env:APPDATA = "$ci\ad"; $env:HUB_NO_BROWSER = "1"; $env:HUB_ROOT = $root; $env:PYTHONUNBUFFERED = "1"
 $hub = Start-Process python -ArgumentList "`"$root\_hub\app\hub.py`" --background" -PassThru -RedirectStandardOutput "$out\hub.out.txt" -RedirectStandardError "$out\hub.err.txt"
 $up = $false
 for ($i = 0; $i -lt 40; $i++) { Start-Sleep 1; try { Invoke-RestMethod http://localhost:8765/api/state | Out-Null; $up = $true; break } catch {} }
