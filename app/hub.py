@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "4.1.1"
+HUB_VERSION = "4.1.2"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -3656,6 +3656,16 @@ class FloatWin:
         self.shown = True
         self.fell = True
         try:
+            form = getattr(self.win, "native", None)
+            if form is not None and hasattr(form, "Invoke"):
+                from System import Action
+
+                def clear():
+                    form.Region = None
+                form.Invoke(Action(clear))
+        except Exception as e:
+            print("fallback form region:", repr(e))
+        try:
             h = self._hwnd()
             if h:
                 from ctypes import wintypes
@@ -3679,7 +3689,16 @@ class FloatWin:
         except Exception:
             ctypes.windll.user32.FindWindowW.restype = ctypes.c_void_p
             h = ctypes.windll.user32.FindWindowW(None, self.TITLE)
+        if h:
+            try:  # make sure it's the top-level window, not the web view inside it
+                ga = ctypes.windll.user32.GetAncestor
+                ga.restype = ctypes.c_void_p
+                ga.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+                h = ga(ctypes.c_void_p(h), 2) or h  # GA_ROOT
+            except Exception:
+                pass
         self.hwnd = h or None
+        print("floating window handle", self.hwnd)
         return self.hwnd
 
     def ready(self):
@@ -3732,13 +3751,53 @@ class FloatWin:
             g.DeleteObject(rgn)
             raise RuntimeError("SetWindowRgn failed")
 
+    def _form_region(self, rects):
+        """Set the clip through WinForms itself (pywebview's window is a WinForms Form)."""
+        form = getattr(self.win, "native", None)
+        if form is None or not hasattr(form, "Invoke"):
+            return False
+        from System import Action  # noqa (pythonnet, used by pywebview on Windows)
+        from System.Drawing import Rectangle, Region
+
+        def apply():
+            reg = Region(Rectangle(0, 0, 0, 0))
+            for x, y, w, h in rects:
+                if w > 0 and h > 0:
+                    reg.Union(Rectangle(int(x), int(y), int(w), int(h)))
+            form.Region = reg
+        form.Invoke(Action(apply))
+        return True
+
+    def _region_ok(self):
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+        u.GetWindowRgnBox.argtypes = [wintypes.HWND, ctypes.c_void_p]
+        rc = wintypes.RECT()
+        kind = u.GetWindowRgnBox(self._hwnd(), ctypes.byref(rc))
+        return kind in (2, 3), (kind, rc.left, rc.top, rc.right, rc.bottom)
+
     def region(self, rects, dpr):
         with self.lock:
             d = float(dpr or 1)
-            self._set_region([[round(v * d) for v in r] for r in rects])
+            px = [[round(v * d) for v in r] for r in rects]
+            done = False
+            try:
+                done = self._form_region(px)
+            except Exception as e:
+                print("form region:", repr(e))
+            if not done:
+                self._set_region(px)
+            ok, info = self._region_ok()
+            if not ok and done:
+                self._set_region(px)
+                ok, info = self._region_ok()
             if not self.shown:
+                print("floating window region:", ok, info, "parts:", len(rects), "dpr:", d)
+                if not ok:  # never leave a screen-sized grey window up
+                    self.fallback()
+                    return
                 self.shown = True
-                print("floating window up, %d parts" % len(rects))
 
 
 class FloatApi:
