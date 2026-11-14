@@ -11,7 +11,7 @@
 $ErrorActionPreference = 'Stop'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$version = 'v4.5'
+$version = '44657240edadcc706baa1789c4dabd474f934ab9'  # RotLab 4.5 (a fixed, tested commit)
 $project = if ($env:ROTLAB_DIR) { $env:ROTLAB_DIR } else { 'C:\VegasProject' }
 $app     = Join-Path $env:LOCALAPPDATA 'RotLab\app'
 $env:ROTLAB_ROOT = $project
@@ -27,7 +27,7 @@ $zip = Join-Path $env:TEMP 'rotlab-main.zip'
 $tmp = Join-Path $env:TEMP ('rotlab-' + [guid]::NewGuid().ToString('N'))
 
 Write-Host '  Downloading RotLab...'
-Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/doolz99/rotlab/archive/refs/tags/$version.zip" -OutFile $zip
+Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/doolz99/rotlab/archive/$version.zip" -OutFile $zip
 
 Write-Host '  Unpacking...'
 Expand-Archive -Path $zip -DestinationPath $tmp -Force
