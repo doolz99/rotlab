@@ -227,6 +227,17 @@ class App:
             ok = False
             self.say("✖ Couldn't save name: %s" % e)
 
+        root = os.environ.get("ROTLAB_ROOT", "").strip()
+        if root:  # where the project folder is; the program itself stays in this PC's own app folder
+            try:
+                cfg = load_config()
+                cfg["root"] = root
+                with open(config_path(), "w", encoding="utf-8") as fh:
+                    json.dump(cfg, fh, indent=1)
+                self.say("✔ Project folder: " + root)
+            except Exception as e:
+                self.say("✖ Couldn't save the project folder: %s" % e)
+
         invite = os.environ.get("ROTLAB_INVITE", "").strip()
         if invite:
             try:

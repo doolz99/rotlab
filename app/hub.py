@@ -40,11 +40,32 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "4.4"
+HUB_VERSION = "4.5"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
-ROOT = os.path.realpath(os.environ.get("HUB_ROOT") or os.path.dirname(HUB_DIR))  # <Project>
+
+
+def _project_root():
+    """The project folder. The program itself lives outside it (in this PC's own app folder), so the
+    other PC can't change the code that runs here; older installs ran from <Project>/_hub/app."""
+    if os.environ.get("HUB_ROOT"):
+        return os.environ["HUB_ROOT"]
+    try:
+        base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
+        with open(os.path.join(base, "VegasHub", "config.json"), encoding="utf-8") as f:
+            r = (json.load(f) or {}).get("root")
+        if r:
+            return r
+    except Exception:
+        pass
+    if os.path.basename(os.path.dirname(APP_DIR)).lower() == "_hub":
+        return os.path.dirname(os.path.dirname(APP_DIR))
+    return os.environ.get("ROTLAB_ROOT") or (r"C:\VegasProject" if os.name == "nt" else os.path.join(os.path.expanduser("~"), "VegasProject"))
+
+
+ROOT = os.path.realpath(_project_root())  # <Project>
+HUB_DIR = os.path.join(ROOT, "_hub")
+LOCAL_APP_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".local", "share"), "RotLab", "app")
 PRESENCE_DIR = os.path.join(HUB_DIR, "presence")
 ACTIVITY_DIR = os.path.join(HUB_DIR, "activity")
 CHAT_DIR = os.path.join(HUB_DIR, "chat")
@@ -203,7 +224,7 @@ def config_file():
 
 
 CONFIG = {"name": "", "syncthing_url": "http://127.0.0.1:8384", "syncthing_api_key": "",
-          "auto_sort": True, "date_folders": True, "phone_uploads": True,
+          "auto_sort": True, "date_folders": True, "phone_uploads": False,
           "folders": {"Video": "Video", "Audio": "Audio", "Images": "Images", "Graphics": "Graphics", "Other": "Other"},
           "read": {"chat": 0, "log": 0}}
 CONFIG.update(read_json(config_file(), {}) or {})
@@ -233,7 +254,7 @@ BUILTIN_URL = "http://127.0.0.1:%s" % os.environ.get("HUB_ST_PORT", "8385")
 ST_FALLBACK_TAG = "v2.0.15"
 IGNORE_DEFAULTS = ["// added by Vegas Hub: skip files VEGAS can rebuild (saves data),",
                    "// and the Inbox, which each PC sorts on its own",
-                   "/Inbox", "(?d)*.sfk", "(?d)Thumbs.db", "(?d)desktop.ini"]
+                   "/Inbox", "/_hub/app", "(?d)*.sfk", "(?d)Thumbs.db", "(?d)desktop.ini"]
 IGNORE_REQUIRED = ["/Inbox", "(?d)*.sfk"]
 
 ST = {"mode": None, "url": None, "key": None, "proc": None}  # mode: external | builtin | missing
@@ -526,9 +547,11 @@ def share_with(device_id, name):
         st("PUT", "/rest/config/folders/" + f["id"], f)
 
 
-def make_invite():
+def make_invite(token=None):
     f = ensure_project_folder()
     data = {"v": 1, "d": my_id(), "n": me(), "f": f["id"]}
+    if token:
+        data["t"] = token
     code = base64.urlsafe_b64encode(json.dumps(data, separators=(",", ":")).encode()).decode().rstrip("=")
     return "VEGASHUB-" + code
 
@@ -551,13 +574,23 @@ def join_invite(code):
     if data["d"] == my_id():
         raise ValueError("That's your own invite code - send it to your friend instead")
     ensure_project_folder(fid=data["f"])
+    tok = re.sub(r"[^0-9a-f]", "", str(data.get("t") or ""))[:16]
+    if tok:  # the inviter's PC lets in only the device that shows this one-time secret
+        try:
+            mine = st("GET", "/rest/config/devices/" + my_id()) or {}
+            mine["name"] = "%s's PC #%s" % (me() or "Friend", tok)
+            st("PUT", "/rest/config/devices/" + my_id(), mine)
+        except Exception as e:
+            print("invite name:", repr(e))
     share_with(data["d"], "%s's PC" % (data.get("n") or "Friend"))
     return data
 
 
 def make_invite_file():
-    """A small file to send on Discord: double-clicking it installs RotLab and links with this PC."""
-    code = make_invite()
+    """A small file to send on Discord: double-clicking it installs RotLab and links with this PC.
+    It carries a one-time secret: only the first device that shows it is let in, and only within a week."""
+    tok = uuid.uuid4().hex[:12]
+    code = make_invite(tok)
     who = re.sub(r'[^A-Za-z0-9 _.\-]', "", me() or "Friend").strip() or "Friend"
     body = "\r\n".join([
         "@echo off",
@@ -576,7 +609,10 @@ def make_invite_file():
     path = os.path.join(folder, "Join %s's RotLab.cmd" % who)
     with open(path, "w", newline="") as fh:
         fh.write(body)
-    CONFIG["invite_open_until"] = now() + 7 * 86400  # whoever uses it in the next week is let in without clicking Accept
+    toks = {t: exp for t, exp in (CONFIG.get("invite_tokens") or {}).items() if exp > now()}
+    toks[tok] = now() + 7 * 86400
+    CONFIG["invite_tokens"] = toks
+    CONFIG.pop("invite_open_until", None)
     save_config()
     return path
 
@@ -589,10 +625,10 @@ def pending_requests():
     return [{"id": k, "name": v.get("name") or k[:7], "time": v.get("time")} for k, v in pend.items()]
 
 
-def accept_request(device_id):
+def accept_request(device_id, name=None):
     pend = {p["id"]: p for p in pending_requests()}
-    name = pend.get(device_id, {}).get("name") or "Friend's PC"
-    share_with(device_id, name)
+    name = name or pend.get(device_id, {}).get("name") or "Friend's PC"
+    share_with(device_id, re.sub(r"\s*#[0-9a-f]{6,16}$", "", name) or "Friend's PC")
 
 
 def dismiss_request(device_id):
@@ -2086,7 +2122,7 @@ def _pat(path):
 
 
 def managed_ignores():
-    lines = []
+    lines = ["/_hub/app"]  # the program is never synced: each PC gets it from GitHub only
     st_ = ws_state()
     folders = [(p["pid"], p["folder"]) for p in st_["projects"].values()] + [(SHARED, SHARED)]
     wanted, freed = CONFIG.get("wanted") or {}, CONFIG.get("freed") or {}
@@ -2688,7 +2724,7 @@ def online_add(item, pid, res=None):
 # a new hub.py is checked for errors and then restarted into.
 SELF = os.path.abspath(__file__)
 SERVER = None
-UPDATE = {"pending": False, "version": None}
+UPDATE = {"pending": False, "version": None, "notes": ""}
 
 
 def file_hash(path):
@@ -2712,20 +2748,31 @@ def read_version(path):
 
 
 def check_for_update():
-    h = file_hash(SELF)
-    if not h or h == START_HASH:
-        UPDATE["pending"] = False
+    """True when a newer version from GitHub is downloaded and waiting for you to install it."""
+    st_ = read_json(os.path.join(STAGE_DIR, "manifest.json"), None)
+    if st_ and _vtuple(st_.get("version", "0")) > _vtuple(HUB_VERSION) and os.path.isfile(os.path.join(STAGE_DIR, "hub.py")):
+        UPDATE.update({"pending": True, "version": st_.get("version"), "notes": st_.get("notes") or ""})
+        return True
+    UPDATE.update({"pending": False, "version": None, "notes": ""})
+    return False
+
+
+def install_staged():
+    """Copy the downloaded version into this PC's program folder (after keeping a backup of this one)."""
+    if not check_for_update():
         return False
-    try:
-        py_compile.compile(SELF, cfile=os.path.join(os.path.dirname(config_file()), "check.pyc"), doraise=True)
-    except Exception as e:
-        print("update ignored, new hub.py has errors:", e)
-        return False
-    UPDATE["pending"], UPDATE["version"] = True, read_version(SELF)
+    py_compile.compile(os.path.join(STAGE_DIR, "hub.py"), cfile=os.path.join(STAGE_DIR, "check.pyc"), doraise=True)
+    backup_app()
+    names = [f for f in os.listdir(STAGE_DIR) if f not in ("check.pyc",) and os.path.isfile(os.path.join(STAGE_DIR, f))]
+    for f in sorted(names, key=lambda x: x == "hub.py"):  # hub.py last
+        dst = os.path.join(APP_DIR, f)
+        shutil.copyfile(os.path.join(STAGE_DIR, f), dst + ".tmp")
+        os.replace(dst + ".tmp", dst)
+    shutil.rmtree(STAGE_DIR, ignore_errors=True)
     return True
 
 
-def restart(with_window):
+def restart(with_window, script=None):
     print("restarting into new version", UPDATE.get("version"))
     try:
         write_offline_presence()
@@ -2740,18 +2787,20 @@ def restart(with_window):
     exe = sys.executable
     if os.name == "nt" and exe.lower().endswith("python.exe") and os.path.isfile(exe[:-10] + "pythonw.exe"):
         exe = exe[:-10] + "pythonw.exe"
-    args = [exe, SELF] + ([] if with_window else ["--background"])
+    script = script or SELF
+    args = [exe, script] + ([] if with_window else ["--background"])
     flags = 0x00000008 if os.name == "nt" else 0  # DETACHED_PROCESS
-    subprocess.Popen(args, cwd=APP_DIR, creationflags=flags)
+    subprocess.Popen(args, cwd=os.path.dirname(script), creationflags=flags)
     os._exit(0)
 
 
 # ---------------------------------------------------------------- updates from GitHub
-# Every few hours, look at the app's GitHub repo. If it has a newer version, download the files into
-# _hub/app (window files first, hub.py last); the normal self-update above then restarts into it,
-# and sync carries the same files to the other PC.
+# Every few hours, look at the app's GitHub repo. If it has a newer version, download it to a staging
+# folder on this PC and say so; nothing is installed until you click Install. (Sync never carries the
+# program between PCs.)
 GITHUB_RAW = os.environ.get("HUB_GH_RAW", "https://raw.githubusercontent.com/doolz99/rotlab/main/app/")
 GH = {"checked": 0, "latest": None, "error": None, "busy": False}
+STAGE_DIR = os.path.join(os.path.dirname(config_file()), "update")
 
 
 def _vtuple(v):
@@ -2787,7 +2836,11 @@ def github_check(force=False):
         with urllib.request.urlopen(req, timeout=20) as r:
             man = json.loads(r.read().decode("utf-8"))
         GH["latest"], GH["error"] = man.get("version"), None
-        if _vtuple(man.get("version", "0")) <= _vtuple(HUB_VERSION) or UPDATE.get("pending"):
+        if _vtuple(man.get("version", "0")) <= _vtuple(HUB_VERSION):
+            return
+        staged = read_json(os.path.join(STAGE_DIR, "manifest.json"), {}) or {}
+        if staged.get("version") == man.get("version") and os.path.isfile(os.path.join(STAGE_DIR, "hub.py")):
+            check_for_update()
             return
         files = [f for f in man.get("files", []) if re.match(r"^[A-Za-z0-9 ._-]+$", f) and ".." not in f]
         data = {}
@@ -2800,19 +2853,14 @@ def github_check(force=False):
             with open(tmp, "wb") as fh:
                 fh.write(data["hub.py"])
             py_compile.compile(tmp, cfile=tmp + "c", doraise=True)
-        backup_app()
-        for f in sorted(data, key=lambda x: x == "hub.py"):  # hub.py last
-            dst = os.path.join(APP_DIR, f)
-            try:
-                with open(dst, "rb") as fh:
-                    if fh.read() == data[f]:
-                        continue
-            except OSError:
-                pass
-            with open(dst + ".tmp", "wb") as fh:
+        shutil.rmtree(STAGE_DIR, ignore_errors=True)
+        os.makedirs(STAGE_DIR)
+        for f in data:
+            with open(os.path.join(STAGE_DIR, f), "wb") as fh:
                 fh.write(data[f])
-            os.replace(dst + ".tmp", dst)
-        print("downloaded version", man.get("version"), "from GitHub")
+        write_json_atomic(os.path.join(STAGE_DIR, "manifest.json"), man)
+        check_for_update()
+        print("downloaded version", man.get("version"), "from GitHub; waiting for you to install it")
     except Exception as e:
         GH["error"] = "%s" % e.__class__.__name__
         print("github update check:", repr(e))
@@ -2878,13 +2926,12 @@ def monitor():
                     last_written, last_presence_write = status, now()
             if tick % 20 == 5:
                 threading.Thread(target=github_check, daemon=True).start()
-            if tick % 6 == 0 and check_for_update():
-                with STATE_LOCK:
-                    ui_recent = now() - STATE["ui_seen"] < 120
-                if not vegas and not ui_recent:
-                    log_event("updated", version=UPDATE["version"]) if me() else None
-                    restart(with_window=False)
-            if tick % 3 == 0 and (CONFIG.get("pending_invite") or now() < CONFIG.get("invite_open_until", 0)):
+            if tick % 6 == 0:
+                check_for_update()  # only tells you; you choose when to install
+            if PHONE["server"] and now() > PHONE.get("until", 0):
+                stop_phone_server()
+                print("phone uploads switched off (time's up)")
+            if tick % 3 == 0 and (CONFIG.get("pending_invite") or CONFIG.get("invite_tokens")):
                 invite_tick()
             if tick % 2 == 0:
                 st_ = poll_syncthing()
@@ -2897,8 +2944,8 @@ def monitor():
 
 
 def invite_tick():
-    """Finish what an invite file started: join the inviter (on the friend's PC), and let the friend in
-    without an Accept click (on the inviter's PC, for a week after making the file)."""
+    """Finish what an invite file started: join the inviter (on the friend's PC), and on the inviter's PC
+    let in the one device that shows the file's one-time secret, without an Accept click."""
     if resolve_sync() not in ("external", "builtin"):
         return
     code = CONFIG.get("pending_invite")
@@ -2915,14 +2962,25 @@ def invite_tick():
             save_config()
         except Exception as e:
             print("invite join will retry:", repr(e))
-    if now() < CONFIG.get("invite_open_until", 0):
-        for p in pending_requests():
-            try:
-                accept_request(p["id"])
-                log_event("sync_accept", device=str(p.get("name", ""))[:60])
-                print("accepted", p.get("name"))
-            except Exception as e:
-                print("auto-accept:", repr(e))
+    toks = {t: exp for t, exp in (CONFIG.get("invite_tokens") or {}).items() if exp > now()}
+    if toks != (CONFIG.get("invite_tokens") or {}):
+        CONFIG["invite_tokens"] = toks
+        save_config()
+    if not toks:
+        return
+    for p in pending_requests():
+        m = re.search(r"#([0-9a-f]{12})$", str(p.get("name") or ""))
+        if not m or m.group(1) not in toks:
+            continue  # not from an invite file of ours: stays a normal request to Accept or Ignore
+        try:
+            accept_request(p["id"], p.get("name"))
+            toks.pop(m.group(1), None)  # one use only
+            CONFIG["invite_tokens"] = toks
+            save_config()
+            log_event("sync_accept", device=re.sub(r"\s*#[0-9a-f]+$", "", str(p.get("name", "")))[:60])
+            print("accepted", p.get("name"))
+        except Exception as e:
+            print("auto-accept:", repr(e))
 
 
 # ---------------------------------------------------------------- API
@@ -3027,7 +3085,16 @@ def build_state():
     }
 
 
+RUNNABLE_EXT = {".exe", ".com", ".bat", ".cmd", ".ps1", ".psm1", ".psd1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
+                ".msi", ".msp", ".msc", ".scr", ".pif", ".lnk", ".url", ".hta", ".cpl", ".reg", ".jar", ".py", ".pyw",
+                ".appref-ms", ".application", ".gadget", ".scf", ".inf", ".settingcontent-ms", ".library-ms", ".dll", ".sys"}
+
+
 def open_path(full):
+    if os.path.splitext(full)[1].lower() in RUNNABLE_EXT:
+        if os.name == "nt":
+            subprocess.Popen(["explorer", "/select,", full])
+        raise ValueError("That's a program or script, so RotLab shows it in Explorer instead of running it")
     if os.name == "nt":
         os.startfile(full)  # noqa
     else:
@@ -3133,15 +3200,15 @@ def handle_post(path, body):
         moved = sort_inbox(force=True)
         return 200, {"ok": True, "count": len(moved)}
     if path == "/api/phone":
-        if "enabled" in body:
-            CONFIG["phone_uploads"] = bool(body["enabled"])
         if body.get("new_pin"):
             CONFIG["phone_pin"] = ""
-        save_config()
-        phone_pin()
-        if CONFIG.get("phone_uploads", True):
+            save_config()
+            phone_pin()
+        if body.get("enabled") is True:
+            PHONE["until"] = now() + PHONE_MINUTES * 60
             start_phone_server()
-        else:
+        elif body.get("enabled") is False:
+            PHONE["until"] = 0
             stop_phone_server()
         return 200, {"ok": True}
     if path == "/api/sync/install":
@@ -3175,9 +3242,13 @@ def handle_post(path, body):
         dismiss_request(str(body.get("id", "")))
         return 200, {"ok": True}
     if path == "/api/restart":
-        if not check_for_update() and not body.get("force"):
-            return 200, {"ok": False, "error": "no update"}
-        log_event("updated", version=UPDATE.get("version") or HUB_VERSION)
+        if body.get("install"):
+            ver = UPDATE.get("version")
+            if not install_staged():
+                return 200, {"ok": False, "error": "no update"}
+            log_event("updated", version=ver or HUB_VERSION)
+        elif not body.get("force"):
+            return 200, {"ok": False, "error": "nothing to do"}
         threading.Thread(target=lambda: (time.sleep(0.4), restart(with_window=bool(body.get("window", True)))), daemon=True).start()
         return 200, {"ok": True}
     if path == "/api/quit":
@@ -3210,7 +3281,14 @@ class Handler(BaseHTTPRequestHandler):
         o = self.headers.get("Origin")
         return not o or re.match(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$", o)
 
+    def _host_ok(self):
+        """A web page can't use a look-alike name (DNS rebinding) to read this PC's RotLab."""
+        h = (self.headers.get("Host") or "").strip().lower()
+        return h in ("localhost:%d" % PORT, "127.0.0.1:%d" % PORT, "[::1]:%d" % PORT, "localhost", "127.0.0.1")
+
     def do_GET(self):
+        if not self._host_ok():
+            return self._json(403, {"error": "bad host"})
         u = urlparse(self.path)
         if u.path == "/":
             data = ui_file("ui.html").encode("utf-8")
@@ -3242,7 +3320,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if not self._origin_ok():
+        if not self._origin_ok() or not self._host_ok():
             return self._json(403, {"error": "bad origin"})
         u = urlparse(self.path)
         if u.path == "/api/upload":
@@ -3305,7 +3383,8 @@ class Handler(BaseHTTPRequestHandler):
 # The main window's server stays localhost-only. This small second server listens on the network
 # so a phone on the same Wi-Fi / hotspot can open a page and upload. Everything needs the PIN.
 PHONE_PORT = int(os.environ.get("HUB_PHONE_PORT", "8766"))
-PHONE = {"server": None, "error": None, "fails": {}}
+PHONE = {"server": None, "error": None, "fails": {}, "until": 0}
+PHONE_MINUTES = 30
 
 
 def phone_pin():
@@ -3411,8 +3490,12 @@ class PhoneHandler(BaseHTTPRequestHandler):
 
 
 def start_phone_server():
-    if PHONE["server"] or not CONFIG.get("phone_uploads", True):
+    """Only while switched on from the Upload from phone window: 30 minutes, with a new PIN each time."""
+    if not PHONE.get("until") or now() > PHONE["until"]:
         return
+    if PHONE["server"]:
+        return
+    CONFIG["phone_pin"] = ""
     try:
         srv = ThreadingHTTPServer(("0.0.0.0", PHONE_PORT), PhoneHandler)
         PHONE["server"], PHONE["error"] = srv, None
@@ -3429,7 +3512,8 @@ def stop_phone_server():
 
 
 def phone_state():
-    return {"enabled": bool(CONFIG.get("phone_uploads", True)), "running": bool(PHONE["server"]),
+    on = bool(PHONE["server"]) and now() < PHONE.get("until", 0)
+    return {"enabled": on, "running": bool(PHONE["server"]), "until": PHONE.get("until", 0) if on else 0,
             "error": PHONE["error"], "pin": phone_pin(), "port": PHONE_PORT, "ips": lan_ips()}
 
 def find_app_browser():
@@ -3569,6 +3653,52 @@ def ensure_running_is_current():
             pass
 
 
+def app_inside_project():
+    try:
+        return os.path.commonpath([os.path.realpath(APP_DIR), ROOT]) == ROOT
+    except ValueError:
+        return False
+
+
+def migrate_app():
+    """Older installs ran from <Project>/_hub/app, inside the synced folder, so whoever you sync with
+    could change the code running on your PC. Copy the program to this PC's own app folder, point the
+    shortcuts and start-with-Windows at it, and run from there from now on."""
+    dst = LOCAL_APP_DIR
+    os.makedirs(dst, exist_ok=True)
+    for f in os.listdir(APP_DIR):
+        fp = os.path.join(APP_DIR, f)
+        if os.path.isfile(fp) and not f.endswith((".tmp", ".pyc")):
+            shutil.copy2(fp, os.path.join(dst, f))
+    CONFIG["root"] = ROOT
+    save_config()
+    if os.name == "nt":
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("rotlab_setup", os.path.join(dst, "Install RotLab.pyw"))
+            setup = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(setup)
+            for folder in setup.shortcut_dirs(True, True):
+                if os.path.exists(os.path.join(folder, setup.SHORTCUT_NAME)):
+                    print("shortcut now points to", setup.make_shortcut(folder))
+            import winreg
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, setup.RUN_KEY) as k:
+                    winreg.QueryValueEx(k, setup.RUN_NAME)
+                setup.set_autostart(True)
+            except FileNotFoundError:
+                pass
+        except Exception as e:
+            print("moving shortcuts:", repr(e))
+    try:
+        with open(os.path.join(APP_DIR, "MOVED.txt"), "w", encoding="utf-8") as fh:
+            fh.write("RotLab now runs from %s on each PC. This folder is no longer used or synced.\n" % dst)
+    except OSError:
+        pass
+    print("moved RotLab to", dst)
+    return os.path.join(dst, "hub.py")
+
+
 def close_tv_windows():
     """4.0-4.2 had a separate TV window program; close it if it's still open after going back."""
     if os.name != "nt":
@@ -3605,6 +3735,12 @@ def main():
             ensure_running_is_current()
             show_window()
         return
+    if app_inside_project() and not os.environ.get("HUB_NO_MIGRATE"):
+        try:
+            new = migrate_app()
+            restart(with_window=not background, script=new)
+        except Exception as e:
+            print("couldn't move RotLab out of the project folder:", repr(e))
     threading.Thread(target=close_tv_windows, daemon=True).start()
     threading.Thread(target=monitor, daemon=True).start()
     threading.Thread(target=srv.serve_forever, daemon=True).start()

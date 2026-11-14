@@ -1,5 +1,5 @@
 {
- "version": "4.4",
+ "version": "4.5",
  "files": [
   "ui.html",
   "phone.html",
@@ -8,5 +8,6 @@
   "Install RotLab.pyw",
   "README.md",
   "hub.py"
- ]
+ ],
+ "notes": "Security update: the program moves out of the synced folder, updates wait for you, one-time invite files, phone uploads switch off by themselves, programs in the folder are never run."
 }

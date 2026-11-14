@@ -2,15 +2,19 @@
 #   Paste this into PowerShell:
 #     irm https://raw.githubusercontent.com/doolz99/rotlab/main/install.ps1 | iex
 #
-# It downloads RotLab into C:\VegasProject\_hub\app (or the folder in $env:ROTLAB_DIR),
-# then runs the setup, which checks for Python and installs everything else.
+# It downloads a tested RotLab version (the tag below) into this PC's own app folder
+# (%LOCALAPPDATA%\RotLab\app, outside the synced project folder, so nobody you sync with can change the
+# program), then runs the setup, which checks for Python and installs everything else.
+# The project folder is C:\VegasProject, or the folder in $env:ROTLAB_DIR.
 # Files downloaded this way are not marked "from the internet", so Windows won't block them.
 
 $ErrorActionPreference = 'Stop'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
+$version = 'v4.5'
 $project = if ($env:ROTLAB_DIR) { $env:ROTLAB_DIR } else { 'C:\VegasProject' }
-$app     = Join-Path $project '_hub\app'
+$app     = Join-Path $env:LOCALAPPDATA 'RotLab\app'
+$env:ROTLAB_ROOT = $project
 
 Write-Host ''
 Write-Host '  RotLab installer' -ForegroundColor Cyan
@@ -23,11 +27,12 @@ $zip = Join-Path $env:TEMP 'rotlab-main.zip'
 $tmp = Join-Path $env:TEMP ('rotlab-' + [guid]::NewGuid().ToString('N'))
 
 Write-Host '  Downloading RotLab...'
-Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/doolz99/rotlab/archive/refs/heads/main.zip' -OutFile $zip
+Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/doolz99/rotlab/archive/refs/tags/$version.zip" -OutFile $zip
 
 Write-Host '  Unpacking...'
 Expand-Archive -Path $zip -DestinationPath $tmp -Force
-Copy-Item -Path (Join-Path $tmp 'rotlab-main\app\*') -Destination $app -Recurse -Force
+$src = Get-ChildItem -Directory $tmp | Select-Object -First 1
+Copy-Item -Path (Join-Path $src.FullName 'app\*') -Destination $app -Recurse -Force
 Remove-Item -Recurse -Force $zip, $tmp -ErrorAction SilentlyContinue
 
 Write-Host "  Installed to $app" -ForegroundColor Green
