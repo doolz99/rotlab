@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "4.5"
+HUB_VERSION = "4.6"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -2075,6 +2075,13 @@ def preview_meta(path):
     return read_json(os.path.join(PREVIEW_DIR, preview_id(path) + ".json"))
 
 
+# Videos the window's built-in player can't read (AVI, WMV, MPEG...): Windows makes their previews instead,
+# the same thumbnails File Explorer shows.
+SHELL_VIDEO_EXT = {".avi", ".wmv", ".flv", ".mpg", ".mpeg", ".m2ts", ".mts", ".3gp", ".3g2", ".vob", ".asf", ".divx",
+                   ".dv", ".mxf", ".ts", ".m2v", ".f4v", ".rm", ".rmvb", ".ogv"}
+SHELL_IMAGE_EXT = {".tif", ".tiff", ".heic", ".heif", ".avif"}
+
+
 def preview_todo(limit=4):
     with LIB_LOCK:
         items = list(LIB["items"])
@@ -2083,6 +2090,8 @@ def preview_todo(limit=4):
         if i["media"] not in ("Video", "Audio", "Images", "Graphics"):
             continue
         ext = os.path.splitext(i["path"])[1].lower()
+        if ext in SHELL_VIDEO_EXT or ext in SHELL_IMAGE_EXT:
+            continue  # Windows does these (shell_previews)
         if i["media"] == "Graphics" and ext not in (".png", ".gif", ".webp", ".svg"):
             continue
         if i["media"] == "Images" and ext not in (".jpg", ".jpeg", ".bmp"):
@@ -2094,6 +2103,120 @@ def preview_todo(limit=4):
         if len(out) >= limit:
             break
     return out
+
+
+SHELL_PS = r"""
+$ErrorActionPreference = 'Stop'
+Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
+using System; using System.Runtime.InteropServices; using System.Drawing; using System.Drawing.Imaging;
+[StructLayout(LayoutKind.Sequential)] public struct RotSize { public int cx; public int cy; }
+[ComImport, Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IShellItemImageFactory { [PreserveSig] int GetImage(RotSize size, int flags, out IntPtr phbm); }
+public static class RotThumb {
+  [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+  static extern void SHCreateItemFromParsingName(string path, IntPtr pbc, [MarshalAs(UnmanagedType.LPStruct)] Guid riid,
+    [MarshalAs(UnmanagedType.Interface)] out IShellItemImageFactory ppv);
+  [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr h);
+  public static string Save(string src, string dst, int size) {
+    try {
+      IShellItemImageFactory f;
+      SHCreateItemFromParsingName(src, IntPtr.Zero, typeof(IShellItemImageFactory).GUID, out f);
+      RotSize s = new RotSize(); s.cx = size; s.cy = size; IntPtr hb;
+      int hr = f.GetImage(s, 0x8, out hb);  // SIIGBF_THUMBNAILONLY: a real picture, not the file icon
+      if (hr != 0) return "no thumbnail (" + hr.ToString("X") + ")";
+      try { using (Bitmap b = Image.FromHbitmap(hb)) { b.Save(dst, ImageFormat.Jpeg); } } finally { DeleteObject(hb); }
+      return "ok";
+    } catch (Exception e) { return e.Message; }
+  }
+}
+'@
+$jobs = Get-Content -Raw -Encoding UTF8 $args[0] | ConvertFrom-Json
+$sh = New-Object -ComObject Shell.Application
+$out = @()
+foreach ($j in $jobs) {
+  $r = [RotThumb]::Save($j.src, $j.dst, 480)
+  $dur = $null; $w = $null; $h = $null
+  try {
+    $it = $sh.Namespace([IO.Path]::GetDirectoryName($j.src)).ParseName([IO.Path]::GetFileName($j.src))
+    $d = $it.ExtendedProperty("System.Media.Duration"); if ($d) { $dur = [double]$d / 10000000 }
+    $w = $it.ExtendedProperty("System.Video.FrameWidth"); $h = $it.ExtendedProperty("System.Video.FrameHeight")
+  } catch {}
+  $out += @{ path = $j.path; result = $r; duration = $dur; w = $w; h = $h }
+}
+ConvertTo-Json -InputObject @($out) -Compress | Set-Content -Encoding UTF8 $args[1]
+"""
+SHELL_PREV = {"busy": False, "last": 0}
+
+
+def shell_preview_todo(limit=6):
+    """Files Windows should preview: formats the window can't read, and videos the window tried and failed on."""
+    with LIB_LOCK:
+        items = list(LIB["items"])
+    out = []
+    for i in sorted(items, key=lambda x: -x["mtime"]):
+        if i.get("remote") or i["media"] not in ("Video", "Images"):
+            continue
+        ext = os.path.splitext(i["path"])[1].lower()
+        m = preview_meta(i["path"]) or {}
+        same = m.get("size") == i["size"]
+        if same and (m.get("ok") or m.get("shell_tried")):
+            continue
+        failed_in_window = same and not m.get("ok") and (m.get("tries") or 0) >= 1
+        if ext in SHELL_VIDEO_EXT or ext in SHELL_IMAGE_EXT or (i["media"] == "Video" and failed_in_window):
+            out.append(i)
+            if len(out) >= limit:
+                break
+    return out
+
+
+def shell_previews():
+    if os.name != "nt" or SHELL_PREV["busy"] or now() - SHELL_PREV["last"] < 20:
+        return
+    todo = shell_preview_todo()
+    if not todo:
+        return
+    SHELL_PREV["busy"], SHELL_PREV["last"] = True, now()
+    try:
+        os.makedirs(PREVIEW_DIR, exist_ok=True)
+        tmpd = os.path.join(os.path.dirname(config_file()), "thumbs")
+        os.makedirs(tmpd, exist_ok=True)
+        jobs = [{"path": i["path"], "src": os.path.join(ROOT, i["path"]), "dst": os.path.join(tmpd, preview_id(i["path"]) + ".jpg")} for i in todo]
+        jf, of, sf = os.path.join(tmpd, "jobs.json"), os.path.join(tmpd, "out.json"), os.path.join(tmpd, "thumbs.ps1")
+        with open(jf, "w", encoding="utf-8") as fh:
+            json.dump(jobs, fh)
+        with open(sf, "w", encoding="utf-8-sig") as fh:
+            fh.write(SHELL_PS)
+        try:
+            os.remove(of)
+        except OSError:
+            pass
+        subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", sf, jf, of],
+                       capture_output=True, timeout=180, creationflags=0x08000000)
+        res = {}
+        if os.path.isfile(of):
+            with open(of, encoding="utf-8-sig") as fh:  # PowerShell writes a BOM
+                res = {r.get("path"): r for r in (json.load(fh) or [])}
+        sizes = {i["path"]: i["size"] for i in todo}
+        for j in jobs:
+            r = res.get(j["path"]) or {}
+            old = preview_meta(j["path"]) or {}
+            meta = dict(old, path=j["path"], size=sizes[j["path"]], shell_tried=True, ts=now(),
+                        kind=old.get("kind") or ("Video" if os.path.splitext(j["path"])[1].lower() in SHELL_VIDEO_EXT else "Images"))
+            num = lambda v: float(v) if isinstance(v, (int, float)) or (isinstance(v, str) and re.match(r"^[\d.]+$", v)) else None
+            if r.get("result") == "ok" and os.path.isfile(j["dst"]):
+                os.replace(j["dst"], os.path.join(PREVIEW_DIR, preview_id(j["path"]) + ".jpg"))
+                meta.update(ok=True, via="windows", duration=num(r.get("duration")) or old.get("duration"),
+                            w=num(r.get("w")) or old.get("w"), h=num(r.get("h")) or old.get("h"))
+            else:
+                meta["shell_error"] = str(r.get("result") or "no answer")[:200]
+            write_json_atomic(os.path.join(PREVIEW_DIR, preview_id(j["path"]) + ".json"), meta)
+            print("windows preview", j["path"], r.get("result"))
+        with LIB_LOCK:
+            LIB["gen"] = LIB.get("gen", 0) + 1
+    except Exception as e:
+        print("windows previews:", repr(e))
+    finally:
+        SHELL_PREV["busy"] = False
 
 
 def preview_save(b):
@@ -2928,6 +3051,8 @@ def monitor():
                 threading.Thread(target=github_check, daemon=True).start()
             if tick % 6 == 0:
                 check_for_update()  # only tells you; you choose when to install
+            if tick % 10 == 4:
+                threading.Thread(target=shell_previews, daemon=True).start()
             if PHONE["server"] and now() > PHONE.get("until", 0):
                 stop_phone_server()
                 print("phone uploads switched off (time's up)")

@@ -585,7 +585,10 @@ async function selectFile(path,keep){selPath=path;document.querySelectorAll("#li
  const sig=JSON.stringify([path,d.notes.length,d.tags,d.history_count,cs.map(c=>[c.id,c.resolved]),W.links.length,d.cat]);if(keep&&sig===selSig)return;selSig=sig;
  const m0=$("dMedia"),keepT=m0&&m0.dataset.p===path?m0.currentTime:null,prev=$("dNote")&&$("dNote").dataset.p===path?$("dNote").value:"";
  const src="/media?path="+encodeURIComponent(path),timed=d.media==="Video"||d.media==="Audio",img=isImg(d.name);let pv;
- if(d.media==="Video")pv=`<video id="dMedia" data-p="${esc(path)}" src="${src}" controls preload="metadata"></video>`;
+ const noPlay=d.media==="Video"&&/\.(avi|wmv|flv|mpg|mpeg|m2ts|mts|3gp|3g2|vob|asf|divx|dv|mxf|ts|m2v|f4v|rm|rmvb)$/i.test(path);
+ const noPlayBox=()=>`<div style="text-align:center">${d.preview&&d.preview.ok?`<img src="/preview?path=${encodeURIComponent(path)}" alt="" style="max-width:100%;max-height:260px">`:""}<div class="dim" style="margin:6px 0">This kind of video can't play inside RotLab.</div><button class="btn" data-openext="1">Open in your video player</button></div>`;
+ if(noPlay)pv=noPlayBox();
+ else if(d.media==="Video")pv=`<video id="dMedia" data-p="${esc(path)}" src="${src}" controls preload="metadata"></video>`;
  else if(d.media==="Audio")pv=`<audio id="dMedia" data-p="${esc(path)}" src="${src}" controls preload="metadata"></audio>`;
  else if(img)pv=`<div style="position:relative;display:inline-block;max-height:100%" id="imgWrap"><img id="dImg" src="${src}" alt="" style="max-height:340px">${cs.filter(c=>c.x!=null).map((c,i)=>`<span class="pin" style="left:${c.x*100}%;top:${c.y*100}%;${c.resolved?"opacity:.4":""}" data-cid="${c.id}" title="${esc(c.text)}">${i+1}</span>`).join("")}</div>`;
  else pv=`<div class="dim" style="text-align:center;padding:20px">${d.app?esc(d.app)+" project":"No preview"}</div>`;
@@ -604,6 +607,8 @@ async function selectFile(path,keep){selPath=path;document.querySelectorAll("#li
    <div style="display:flex;gap:6px;align-items:center"><label for="dNote" class="dim" id="dAt" style="font-size:12px;white-space:nowrap">Comment:</label><input id="dNote" data-p="${esc(path)}" class="field" style="flex:1;min-width:0"><button class="btn" id="dNoteBtn">Add</button></div></div>`;
  $("detail").style.display="flex";$("dNote").value=prev;
  $("dOpen").onclick=async()=>{if(d.remote)return toast("Get it first");try{if(d.app){const r=await api("/api/open_project",{path});if(r.waiting)toast("Getting "+r.waiting+" file"+(r.waiting>1?"s":"")+" it uses ("+size(r.bytes||0)+"), opening when they're here")}else await api("/api/open",{path})}catch(e){toast(e.message)}};
+ const openExt=()=>document.querySelectorAll("[data-openext]").forEach(b=>b.onclick=()=>api("/api/open",{path}).catch(e=>toast(e.message)));openExt();
+ if($("dMedia")&&d.media==="Video")$("dMedia").addEventListener("error",()=>{const st=document.querySelector("#detail .stage");if(st){st.innerHTML=noPlayBox();openExt()}});
  if($("dGet"))$("dGet").onclick=async()=>{await api("/api/storage/get",{paths:[path]});selSig="";await tick();selectFile(path,true)};
  if(d.freeable&&d.ondemand!==undefined){const fb=document.createElement("button");fb.className="btn sm";fb.textContent="Free up space";fb.title="Remove this PC's copy (another PC keeps it)";fb.onclick=()=>freeFiles([path]);$("dShow").after(fb)}
  if(d.app)loadDeps(path);

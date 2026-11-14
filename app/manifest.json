@@ -1,5 +1,5 @@
 {
- "version": "4.5",
+ "version": "4.6",
  "files": [
   "ui.html",
   "phone.html",
@@ -9,5 +9,5 @@
   "README.md",
   "hub.py"
  ],
- "notes": "Security update: the program moves out of the synced folder, updates wait for you, one-time invite files, phone uploads switch off by themselves, programs in the folder are never run."
+ "notes": "AVI, WMV, MPEG and other videos get previews from Windows; videos RotLab can't play get an 'Open in your video player' button."
 }
