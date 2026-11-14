@@ -1,7 +1,6 @@
 {
- "version": "4.2.1",
+ "version": "4.3",
  "files": [
-  "tv.html",
   "ui.html",
   "phone.html",
   "hub.ico",
@@ -9,9 +8,5 @@
   "Install RotLab.pyw",
   "README.md",
   "hub.py"
- ],
- "shell": {
-  "version": "4.2.1",
-  "url": "https://github.com/doolz99/rotlab/releases/download/shell-v4.2.1/RotLabTV.exe"
- }
+ ]
 }

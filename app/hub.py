@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "4.2.1"
+HUB_VERSION = "4.3"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -1930,26 +1930,6 @@ def ws_post(path, body):
     if path == "/api/online/add":
         it = b.get("item") or {}
         return 200, {"ok": True, "job": online_add(it, b.get("pid") or current_project(), b.get("res"))}
-    if path == "/api/debug":
-        print("page debug:", json.dumps(body)[:2000])
-        return 200, {"ok": True}
-    if path == "/api/layout":
-        CONFIG["layout"] = "classic" if b.get("layout") == "classic" else "tv"
-        save_config()
-        return 200, {"ok": True, "layout": CONFIG["layout"]}
-    if path == "/api/project_view":
-        return 200, project_view(b.get("pid"))
-    if path == "/api/library_view":
-        return 200, library_view(b.get("q"), b.get("cat"))
-    if path == "/api/link_many":
-        done, errs = 0, []
-        for f in (b.get("files") or [])[:200]:
-            try:
-                new_link(b.get("pid"), None, "Any", f)
-                done += 1
-            except Exception as e:
-                errs.append("%s: %s" % (os.path.basename(f), e))
-        return 200, {"ok": True, "done": done, "errors": errs}
     if path == "/api/ws/outputs":
         return 200, {"items": outputs_of(b.get("pid"), b.get("cat") or "Any")[:50]}
     return None
@@ -2823,118 +2803,7 @@ def ui_file(name):
 
 
 def ui_hash():
-    return ((file_hash(os.path.join(APP_DIR, "ui.html")) or "")[:6] + (file_hash(os.path.join(APP_DIR, "tv.html")) or "")[:6])
-
-
-# ---------------------------------------------------------------- TV layout: library usage + project view
-USAGE = {}  # project file path -> (mtime, [workspace paths it uses])
-USAGE_LOCK = threading.Lock()
-
-
-def usage_index(budget=15):
-    """shared path -> sorted list of project ids that use it (linked in, or referenced by a project file)."""
-    with LIB_LOCK:
-        items = list(LIB["items"])
-    out = {}
-    for l in ws_state()["links"].values():
-        f = l.get("file") or l.get("version") or ""
-        if f.startswith(SHARED + "/"):
-            out.setdefault(f, set()).add(l["pid"])
-    done = 0
-    for it in items:
-        if it["cat"] != "Project" or it.get("project") in (None, SHARED):
-            continue
-        with USAGE_LOCK:
-            c = USAGE.get(it["path"])
-        if not c or c[0] != it["mtime"]:
-            if done >= budget:
-                continue
-            done += 1
-            try:
-                used = [x["path"] for x in project_deps(it["path"])["items"] if x.get("path")]
-            except Exception:
-                used = []
-            c = (it["mtime"], used)
-            with USAGE_LOCK:
-                USAGE[it["path"]] = c
-        for p in c[1]:
-            if p.startswith(SHARED + "/"):
-                out.setdefault(p, set()).add(it["project"])
-    return {k: sorted(v) for k, v in out.items()}
-
-
-def _here_state(path):
-    if os.path.exists(os.path.join(ROOT, path)):
-        return "here"
-    if path in (CONFIG.get("wanted") or {}):
-        return "getting"
-    return "remote" if path in remote_index() else "missing"
-
-
-def project_view(pid):
-    st_ = ws_state()
-    if pid not in st_["projects"]:
-        raise ValueError("unknown project")
-    p = st_["projects"][pid]
-    items = library(project=pid)["items"]
-    comments = {}
-    for c in st_["comments"].values():
-        if not c.get("resolved"):
-            comments[c["file"]] = comments.get(c["file"], 0) + 1
-    pfiles = [i for i in items if i["cat"] == "Project"]
-    renders = [i for i in items if i.get("export")]
-    linked_dir = (p["folder"] + "/linked/").lower()
-    own = [i for i in items if not i.get("export") and i["cat"] != "Project" and not i["path"].lower().startswith(linked_dir)]
-    uses, seen = [], set()
-    for l in st_["links"].values():
-        if l["pid"] != pid:
-            continue
-        src = l.get("file") or l.get("version") or ""
-        seen.add(src)
-        seen.add(l.get("target"))
-        uses.append({"name": os.path.basename(src or l.get("target") or "?"), "path": l.get("target"), "src": src,
-                     "from": l.get("src"), "how": "linked", "state": _here_state(l["target"]) if l.get("target") else "missing"})
-    for pf in pfiles[:3]:
-        with USAGE_LOCK:
-            c = USAGE.get(pf["path"])
-        if c is None or c[0] != pf["mtime"]:
-            try:
-                used = [x["path"] for x in project_deps(pf["path"])["items"] if x.get("path")]
-            except Exception:
-                used = []
-            with USAGE_LOCK:
-                USAGE[pf["path"]] = (pf["mtime"], used)
-            c = (pf["mtime"], used)
-        for u in c[1]:
-            if u in seen or not u.startswith(SHARED + "/"):
-                continue
-            seen.add(u)
-            uses.append({"name": os.path.basename(u), "path": u, "src": u, "from": SHARED, "how": "used by " + pf["name"],
-                         "state": _here_state(u)})
-    slim = lambda i: {"path": i["path"], "name": i["name"], "mtime": i["mtime"], "by": i.get("by"), "media": i.get("media"),
-                      "remote": bool(i.get("remote")), "getting": bool(i.get("getting")), "preview": i.get("preview"),
-                      "comments": comments.get(i["path"], 0) + i.get("notes", 0)}
-    reqs = [request_view(r, st_) for r in st_["requests"].values() if r["pid"] == pid]
-    reqs = [{"rid": r["rid"], "num": r["num"], "title": r["title"], "status": r["status"], "by": r["by"], "to": r["to"],
-             "claimed": r.get("claimed"), "type": r["type"]} for r in sorted(reqs, key=lambda r: -r["ts"]) if r["status"] not in ("done", "cancelled")]
-    return {"pid": pid, "name": p["name"], "type": p["type"], "folder": p["folder"],
-            "project_files": [slim(i) for i in pfiles[:6]], "uses": uses,
-            "own": [slim(i) for i in own[:12]], "own_count": len(own),
-            "renders": [slim(i) for i in renders[:6]], "requests": reqs}
-
-
-def library_view(q=None, cat=None):
-    r = library(cat=None, q=q, project=SHARED)
-    use = usage_index()
-    items = r["items"]
-    if cat and cat != "All" and not q:
-        items = [i for i in items if (i["media"] if cat in ("Video", "Audio", "Images", "Graphics") else i["cat"]) == cat]
-    out = []
-    for i in items[:800]:
-        out.append({"path": i["path"], "name": i["name"], "media": i["media"], "cat": i["cat"], "mtime": i["mtime"],
-                    "size": i["size"], "by": i.get("by"), "remote": bool(i.get("remote")), "getting": bool(i.get("getting")),
-                    "preview": i.get("preview"), "used_in": use.get(i["path"], []), "folder": i["folder"]})
-    return {"items": out, "total": len(r["items"]), "gen": r["gen"]}
+    return (file_hash(os.path.join(APP_DIR, "ui.html")) or "")[:12]
 
 
 # ---------------------------------------------------------------- background monitor
@@ -3094,8 +2963,7 @@ def build_state():
         "settings": {"auto_sort": CONFIG.get("auto_sort", True), "date_folders": CONFIG.get("date_folders", True),
                      "autostart": get_autostart(), "windows": os.name == "nt",
                      "native_window": has_native_window(), "folders": CONFIG.get("folders"),
-                     "github_updates": CONFIG.get("github_updates", True), "live": CONFIG.get("live", True), "storage": storage_default(),
-                     "layout": CONFIG.get("layout", "tv")},
+                     "github_updates": CONFIG.get("github_updates", True), "live": CONFIG.get("live", True), "storage": storage_default()},
         "live": live_info(),
         "storage": storage_state(),
         "github": {"latest": GH["latest"], "error": GH["error"], "checked": GH["checked"], "busy": GH["busy"]},
@@ -3277,9 +3145,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path)
-        if u.path in ("/", "/tv", "/classic"):
-            page = "ui.html" if u.path == "/classic" or (u.path == "/" and CONFIG.get("layout") == "classic") else "tv.html"
-            data = ui_file(page).encode("utf-8")
+        if u.path == "/":
+            data = ui_file("ui.html").encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
@@ -3589,171 +3456,14 @@ def has_native_window():
 
 
 def run_native_window():
-    """pywebview fallback: the old one-window layout, or the TV layout inside an ordinary window."""
+    """Real desktop window (pywebview / Edge WebView2). Blocks until the window is closed."""
     import webview
-    if CONFIG.get("layout") == "classic":
-        webview.create_window("RotLab", "http://localhost:%d/classic" % PORT, width=1320, height=900, min_size=(760, 560))
-    else:
-        webview.create_window("RotLab", "http://localhost:%d/tv" % PORT, width=1340, height=860, min_size=(900, 640),
-                              background_color="#1d2a2c", js_api=FloatApi(None))
-    _wv_start(webview)
-
-
-def _wv_start(webview):
-    try:
-        webview.start(private_mode=False)  # keep the page's saved settings (TV position, sounds...) between runs
-    except TypeError:
-        webview.start()
-
-
-# ---------------------------------------------------------------- RotLab TV (see-through window, built on GitHub)
-def shell_info():
-    m = read_json(os.path.join(APP_DIR, "manifest.json"), {}) or {}
-    return m.get("shell") or {}
-
-
-def shell_exe(download=True):
-    """Path of RotLabTV.exe for this version, downloading it once from the GitHub release if needed."""
-    if os.name != "nt":
-        return None
-    info = shell_info()
-    ver, url = info.get("version"), info.get("url")
-    if not ver or not url:
-        return None
-    d = os.path.join(os.path.dirname(config_file()), "shell")
-    exe = os.path.join(d, "RotLabTV-%s.exe" % ver)
-    if os.path.isfile(exe):
-        return exe
-    if not download:
-        return None
-    try:
-        os.makedirs(d, exist_ok=True)
-        print("downloading RotLab TV", ver)
-        req = urllib.request.Request(url, headers={"User-Agent": "RotLab"})
-        tmp = exe + ".part"
-        with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as fh:
-            shutil.copyfileobj(r, fh)
-        if os.path.getsize(tmp) < 500000:
-            raise ValueError("download too small")
-        os.replace(tmp, exe)
-        for f in os.listdir(d):  # old versions
-            if f.startswith("RotLabTV-") and f.endswith(".exe") and f != os.path.basename(exe):
-                try:
-                    os.remove(os.path.join(d, f))
-                except OSError:
-                    pass
-        return exe
-    except Exception as e:
-        print("RotLab TV download failed:", repr(e))
-        return None
-
-
-def stop_shell(keep=None):
-    """Close running RotLab TV windows (other versions, or all)."""
-    if os.name != "nt":
-        return
-    d = os.path.join(os.path.dirname(config_file()), "shell")
-    try:
-        names = [f for f in os.listdir(d) if f.startswith("RotLabTV-") and f.endswith(".exe")]
-    except OSError:
-        names = []
-    for n in set(names + ["RotLabTV-%s.exe" % shell_info().get("version")]):
-        if keep and n == os.path.basename(keep):
-            continue
-        try:
-            subprocess.run(["taskkill", "/F", "/IM", n], capture_output=True, timeout=10, creationflags=0x08000000)
-        except Exception:
-            pass
-
-
-def run_shell():
-    if CONFIG.get("layout") == "classic":
-        return False
-    exe = shell_exe()
-    if not exe:
-        return False
-    stop_shell(keep=exe)  # an older RotLab TV would otherwise stay open instead of this one
-    try:
-        args = [exe, "--port", str(PORT)] + ([] if CONFIG.get("on_top", True) else ["--not-on-top"])
-        subprocess.Popen(args, cwd=os.path.dirname(exe))
-        print("started RotLab TV")
-        return True
-    except Exception as e:
-        print("RotLab TV failed to start:", repr(e))
-        return False
-
-
-class FloatApi:
-    """Called from the page as window.pywebview.api.*"""
-
-    def __init__(self, f):
-        self._f = f
-
-    def ready(self):
-        if not self._f:
-            return {"ok": False}
-        try:
-            return self._f.ready()
-        except Exception as e:
-            print("float ready:", repr(e))
-            self._f.fallback()
-            return {"ok": False, "error": repr(e)}
-
-    def region(self, rects, dpr=1):
-        if self._f and not getattr(self._f, "fell", False):
-            try:
-                self._f.region(rects or [], dpr)
-            except Exception as e:
-                print("float region:", repr(e))
-                if not self._f.shown:
-                    self._f.fallback()
-
-    def save_monitor(self, x, y):
-        CONFIG["tv_monitor"] = [int(x), int(y)]
-        save_config()
-
-    def on_top(self, v):
-        CONFIG["on_top"] = bool(v)
-        save_config()
-        try:
-            self._win().on_top = bool(v)
-        except Exception:
-            pass
-
-    def _win(self):
-        import webview
-        return self._f.win if self._f else webview.windows[0]
-
-    def minimize(self):
-        try:
-            self._win().minimize()
-        except Exception:
-            pass
-
-    def close(self):
-        try:
-            self._win().destroy()
-        except Exception:
-            pass
-
-    def classic(self, hash_=""):
-        import webview
-        url = "http://localhost:%d/classic%s" % (PORT, ("#" + hash_) if hash_ else "")
-        for w in webview.windows:
-            if w.title == "RotLab (full window)":
-                try:
-                    w.load_url(url)
-                    w.show()
-                    w.restore()
-                    return
-                except Exception:
-                    break
-        webview.create_window("RotLab (full window)", url, width=1320, height=900, min_size=(760, 560))
+    webview.create_window("RotLab", "http://localhost:%d" % PORT,
+                          width=1320, height=900, min_size=(760, 560))
+    webview.start()
 
 
 def show_window():
-    if run_shell():
-        return True
     if has_native_window():
         try:
             run_native_window()
@@ -3792,6 +3502,22 @@ def ensure_running_is_current():
             pass
 
 
+def close_tv_windows():
+    """4.0-4.2 had a separate TV window program; close it if it's still open after going back."""
+    if os.name != "nt":
+        return
+    d = os.path.join(os.path.dirname(config_file()), "shell")
+    try:
+        names = [f for f in os.listdir(d) if f.lower().endswith(".exe")]
+    except OSError:
+        return
+    for n in names:
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", n], capture_output=True, timeout=10, creationflags=0x08000000)
+        except Exception:
+            pass
+
+
 def main():
     # pythonw.exe (no console window) has no stdout - send output to a log file instead
     if sys.stdout is None or sys.stderr is None:
@@ -3812,6 +3538,7 @@ def main():
             ensure_running_is_current()
             show_window()
         return
+    threading.Thread(target=close_tv_windows, daemon=True).start()
     threading.Thread(target=monitor, daemon=True).start()
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     start_phone_server()
