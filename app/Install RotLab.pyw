@@ -227,6 +227,21 @@ class App:
             ok = False
             self.say("✖ Couldn't save name: %s" % e)
 
+        invite = os.environ.get("ROTLAB_INVITE", "").strip()
+        if invite:
+            try:
+                import base64
+                c = invite[9:] if invite.upper().startswith("VEGASHUB-") else invite
+                who = json.loads(base64.urlsafe_b64decode(c + "=" * (-len(c) % 4)).decode()).get("n") or "your friend"
+                cfg = load_config()
+                cfg["pending_invite"] = invite
+                with open(config_path(), "w", encoding="utf-8") as fh:
+                    json.dump(cfg, fh, indent=1)
+                self.o_sync.set(True)
+                self.say("✔ Will link with %s's PC as soon as sync starts" % who)
+            except Exception as e:
+                self.say("✖ The invite in this installer didn't work (%s). Ask for a new one." % e)
+
         if self.o_sync.get():
             if syncthing_found():
                 self.say("✔ Using the Syncthing already installed on this PC")

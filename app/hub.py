@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "4.3"
+HUB_VERSION = "4.4"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HUB_DIR = os.path.dirname(APP_DIR)  # <Project>/_hub
@@ -553,6 +553,32 @@ def join_invite(code):
     ensure_project_folder(fid=data["f"])
     share_with(data["d"], "%s's PC" % (data.get("n") or "Friend"))
     return data
+
+
+def make_invite_file():
+    """A small file to send on Discord: double-clicking it installs RotLab and links with this PC."""
+    code = make_invite()
+    who = re.sub(r'[^A-Za-z0-9 _.\-]', "", me() or "Friend").strip() or "Friend"
+    body = "\r\n".join([
+        "@echo off",
+        "title Join %s's RotLab" % who,
+        "echo.",
+        "echo   This installs RotLab and links it with %s's PC." % who,
+        "echo   Just type your name when the setup window asks, and click Install.",
+        "echo.",
+        'set "ROTLAB_INVITE=%s"' % code,
+        'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/doolz99/rotlab/main/install.ps1 | iex"',
+        "if errorlevel 1 pause",
+        ""])
+    folder = os.path.join(os.path.expanduser("~"), "Downloads")
+    if not os.path.isdir(folder):
+        folder = os.path.expanduser("~")
+    path = os.path.join(folder, "Join %s's RotLab.cmd" % who)
+    with open(path, "w", newline="") as fh:
+        fh.write(body)
+    CONFIG["invite_open_until"] = now() + 7 * 86400  # whoever uses it in the next week is let in without clicking Accept
+    save_config()
+    return path
 
 
 def pending_requests():
@@ -2858,6 +2884,8 @@ def monitor():
                 if not vegas and not ui_recent:
                     log_event("updated", version=UPDATE["version"]) if me() else None
                     restart(with_window=False)
+            if tick % 3 == 0 and (CONFIG.get("pending_invite") or now() < CONFIG.get("invite_open_until", 0)):
+                invite_tick()
             if tick % 2 == 0:
                 st_ = poll_syncthing()
                 with STATE_LOCK:
@@ -2866,6 +2894,35 @@ def monitor():
             print("monitor error:", repr(e), file=sys.stderr)
         tick += 1
         time.sleep(3)
+
+
+def invite_tick():
+    """Finish what an invite file started: join the inviter (on the friend's PC), and let the friend in
+    without an Accept click (on the inviter's PC, for a week after making the file)."""
+    if resolve_sync() not in ("external", "builtin"):
+        return
+    code = CONFIG.get("pending_invite")
+    if code:
+        try:
+            data = join_invite(code)
+            log_event("sync_join", friend=data.get("n") or "")
+            print("joined", data.get("n"))
+            CONFIG.pop("pending_invite", None)
+            save_config()
+        except ValueError as e:  # bad or own code: give up on it
+            print("invite:", e)
+            CONFIG.pop("pending_invite", None)
+            save_config()
+        except Exception as e:
+            print("invite join will retry:", repr(e))
+    if now() < CONFIG.get("invite_open_until", 0):
+        for p in pending_requests():
+            try:
+                accept_request(p["id"])
+                log_event("sync_accept", device=str(p.get("name", ""))[:60])
+                print("accepted", p.get("name"))
+            except Exception as e:
+                print("auto-accept:", repr(e))
 
 
 # ---------------------------------------------------------------- API
@@ -3094,6 +3151,16 @@ def handle_post(path, body):
         if resolve_sync() not in ("external", "builtin"):
             return 400, {"error": "Set up sync first"}
         return 200, {"ok": True, "code": make_invite()}
+    if path == "/api/sync/invite_file":
+        if resolve_sync() not in ("external", "builtin"):
+            return 400, {"error": "Set up sync first"}
+        p = make_invite_file()
+        try:
+            if os.name == "nt":
+                subprocess.Popen(["explorer", "/select,", p])
+        except Exception:
+            pass
+        return 200, {"ok": True, "path": p}
     if path == "/api/sync/join":
         if resolve_sync() not in ("external", "builtin"):
             return 400, {"error": "Set up sync first"}

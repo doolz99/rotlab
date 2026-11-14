@@ -2,6 +2,10 @@
 
 A shared hub for a VEGAS video project between two PCs: a media library for the project folder (video, audio, images, graphics, renders, project files), notes and tags on files, project-file history, chat, a log of what changed, uploads from a phone, and file sync between the PCs (Syncthing, set up automatically).
 
+## Invite a friend (easiest)
+
+In RotLab: **Sync** menu → **Make invite file**. A file called *Join (your name)'s RotLab.cmd* appears in your Downloads. Send it to your friend (Discord is fine). They double-click it (if Windows warns about it, click **Run** / **More info → Run anyway**), type their name, and click **Install**. RotLab installs and links with your PC by itself.
+
 ## Install (Windows)
 
 Open **PowerShell** (Start menu → type `powershell` → Enter), paste this line and press Enter:
