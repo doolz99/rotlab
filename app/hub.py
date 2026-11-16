@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "5.0"
+HUB_VERSION = "5.1"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -3299,8 +3299,13 @@ def radio_eligible(st_):
     return out
 
 
+RADIO_MIN_VERSION = (5, 0)
+
+
 def radio_dj():
-    ppl = sorted({p["user"] for p in read_presence() if p["live"] != "offline"} | ({me()} if me() else set()), key=str.lower)
+    """Who makes the play list: the first (alphabetically) of the people online whose RotLab has RotRadio."""
+    ppl = {p["user"] for p in read_presence() if p["live"] != "offline" and _vtuple(p.get("version") or "0") >= RADIO_MIN_VERSION}
+    ppl = sorted(ppl | ({me()} if me() else set()), key=str.lower)
     return ppl[0] if ppl else None
 
 
@@ -3316,20 +3321,25 @@ def radio_schedules():
 
 def radio_current_schedule():
     """The play list everyone follows: the DJ's, or the newest one if the DJ's hasn't arrived yet."""
-    ss = [s for s in radio_schedules() if now() - s.get("ts", 0) < 600]
+    ss = [s for s in radio_schedules() if now() - s.get("ts", 0) < 300]
     dj = radio_dj()
-    mine = [s for s in ss if s.get("user") == dj]
+    mine = [s for s in ss if s.get("user") == dj and now() - s.get("ts", 0) < 75]
     pool = mine or ss
     return max(pool, key=lambda s: s.get("ts", 0)) if pool else None
 
 
 def radio_tick():
-    if not me() or radio_dj() != me():
+    if not me():
         return
+    base = radio_current_schedule()
+    if radio_dj() != me():
+        # stand in when the DJ's play list has gone quiet (their PC asleep, an old RotLab, still syncing...)
+        if base and now() - base.get("ts", 0) < 75:
+            return
     st_ = x_state()
     path = os.path.join(RADIO_DIR, "schedule-%s.json" % slug(me()))
     cur = read_json(path, {}) or {}
-    base = radio_current_schedule() or cur
+    base = base or cur
     queue = [q for q in (base.get("queue") or []) if q.get("start", 0) + q.get("dur", 0) > now()]
     elig = radio_eligible(st_)
     ids = {t["rid"] for t in elig}
@@ -3356,7 +3366,7 @@ def radio_tick():
         end += pick["dur"] + 1.5
         changed = True
     RADIO["recent"] = recent[:10]
-    if changed or now() - cur.get("ts", 0) > 120 or cur.get("queue") != queue:
+    if changed or now() - cur.get("ts", 0) > 30 or cur.get("queue") != queue:
         write_json_atomic(path, {"user": me(), "ts": now(), "queue": queue})
         quick_scan("_hub/radio")
 

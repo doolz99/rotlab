@@ -1,5 +1,5 @@
 {
- "version": "5.0",
+ "version": "5.1",
  "files": [
   "ui.html",
   "phone.html",
@@ -9,5 +9,5 @@
   "README.md",
   "hub.py"
  ],
- "notes": "RotLab 5.0 (fork): Tasks with deadlines and several people, a shared Calendar, Inventory of your gear and where it is, Bugs & suggestions, RotRadio, and cameras (up to 3) and screen sharing."
+ "notes": "RotRadio fix: the radio no longer waits for someone on an older RotLab to pick songs, and another PC takes over if the DJ's PC goes quiet."
 }
