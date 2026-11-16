@@ -1,5 +1,5 @@
 {
- "version": "4.6",
+ "version": "5.0",
  "files": [
   "ui.html",
   "phone.html",
@@ -9,5 +9,5 @@
   "README.md",
   "hub.py"
  ],
- "notes": "AVI, WMV, MPEG and other videos get previews from Windows; videos RotLab can't play get an 'Open in your video player' button."
+ "notes": "RotLab 5.0 (fork): Tasks with deadlines and several people, a shared Calendar, Inventory of your gear and where it is, Bugs & suggestions, RotRadio, and cameras (up to 3) and screen sharing."
 }
