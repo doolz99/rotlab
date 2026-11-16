@@ -1,5 +1,5 @@
 {
- "version": "5.1",
+ "version": "5.2",
  "files": [
   "ui.html",
   "phone.html",
@@ -9,5 +9,5 @@
   "README.md",
   "hub.py"
  ],
- "notes": "RotRadio fix: the radio no longer waits for someone on an older RotLab to pick songs, and another PC takes over if the DJ's PC goes quiet."
+ "notes": "New from your friend's fork: Tasks, Calendar, Inventory, Feedback, RotRadio, cameras and screen sharing. If anything goes wrong: Help \u2192 About \u2192 go back to an older version."
 }

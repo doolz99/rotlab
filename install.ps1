@@ -1,6 +1,6 @@
 # RotLab one-line installer
 #   Paste this into PowerShell:
-#     irm https://raw.githubusercontent.com/doolz99/rotlab/test/install.ps1 | iex
+#     irm https://raw.githubusercontent.com/doolz99/rotlab/main/install.ps1 | iex
 #
 # It downloads a tested RotLab version (the tag below) into this PC's own app folder
 # (%LOCALAPPDATA%\RotLab\app, outside the synced project folder, so nobody you sync with can change the

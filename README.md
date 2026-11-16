@@ -1,6 +1,13 @@
-# RotLab (test branch)
+# RotLab
 
-This is the **test** branch: the extra features made in normanbatesbmotel-boop's fork (version 5.x), being tried out before they go into the main version. A PC on this branch gets its updates from this branch.
+Version 5.2 includes the Tasks, Calendar, Inventory, Feedback, RotRadio and Call features made in normanbatesbmotel-boop's fork.
+
+## Working on RotLab together
+
+1. Each person works in their own fork on GitHub (the **Sync fork** button there brings in the latest from here first).
+2. When something's ready, open a **pull request** to doolz99/rotlab (Contribute → Open pull request).
+3. It gets looked at and tested, then merged into `main`. Both PCs then show *Version X is available* and you each click **Install and restart**.
+4. If an update breaks something: **Help → About → Go back to an older version** (RotLab keeps the last five on each PC).
 
 ## What this fork adds
 
@@ -24,7 +31,7 @@ Each invite file works **once**: it carries a one-time secret, and your PC only 
 Open **PowerShell** (Start menu → type `powershell` → Enter), paste this line and press Enter:
 
 ```powershell
-irm https://raw.githubusercontent.com/doolz99/rotlab/test/install.ps1 | iex
+irm https://raw.githubusercontent.com/doolz99/rotlab/main/install.ps1 | iex
 ```
 
 That downloads a tested version of RotLab into this PC's own app folder (`%LOCALAPPDATA%\RotLab\app`) and starts the setup. The project folder is `C:\VegasProject`. The program is kept outside it on purpose, so nobody you sync with can change the code that runs on your PC.

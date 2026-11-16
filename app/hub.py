@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "5.1"
+HUB_VERSION = "5.2"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -600,7 +600,7 @@ def make_invite_file():
         "echo   Just type your name when the setup window asks, and click Install.",
         "echo.",
         'set "ROTLAB_INVITE=%s"' % code,
-        'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/doolz99/rotlab/test/install.ps1 | iex"',
+        'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/doolz99/rotlab/main/install.ps1 | iex"',
         "if errorlevel 1 pause",
         ""])
     folder = os.path.join(os.path.expanduser("~"), "Downloads")
@@ -2921,13 +2921,41 @@ def restart(with_window, script=None):
 # Every few hours, look at the app's GitHub repo. If it has a newer version, download it to a staging
 # folder on this PC and say so; nothing is installed until you click Install. (Sync never carries the
 # program between PCs.)
-GITHUB_RAW = os.environ.get("HUB_GH_RAW", "https://raw.githubusercontent.com/doolz99/rotlab/test/app/")  # the test branch
+GITHUB_RAW = os.environ.get("HUB_GH_RAW", "https://raw.githubusercontent.com/doolz99/rotlab/main/app/")
 GH = {"checked": 0, "latest": None, "error": None, "busy": False}
 STAGE_DIR = os.path.join(os.path.dirname(config_file()), "update")
 
 
 def _vtuple(v):
     return tuple(int(x) for x in re.findall(r"\d+", str(v))[:4])
+
+
+def app_backups():
+    root = os.path.join(os.path.dirname(config_file()), "app-backup")
+    out = []
+    try:
+        for d in os.listdir(root):
+            if d.startswith("v") and os.path.isfile(os.path.join(root, d, "hub.py")) and d[1:] != HUB_VERSION:
+                out.append({"version": d[1:], "ts": os.path.getmtime(os.path.join(root, d))})
+    except OSError:
+        pass
+    return sorted(out, key=lambda b: _vtuple(b["version"]), reverse=True)
+
+
+def rollback_to(version):
+    """Put back a version kept on this PC (it's kept as a backup itself, so you can come forward again)."""
+    src = os.path.join(os.path.dirname(config_file()), "app-backup", "v" + str(version))
+    if not re.match(r"^[0-9][0-9.]*$", str(version)) or not os.path.isfile(os.path.join(src, "hub.py")):
+        raise ValueError("That version isn't kept on this PC")
+    py_compile.compile(os.path.join(src, "hub.py"), cfile=os.path.join(os.path.dirname(config_file()), "check.pyc"), doraise=True)
+    backup_app()
+    for f in sorted(os.listdir(src), key=lambda x: x == "hub.py"):
+        fp = os.path.join(src, f)
+        if os.path.isfile(fp):
+            shutil.copyfile(fp, os.path.join(APP_DIR, f) + ".tmp")
+            os.replace(os.path.join(APP_DIR, f) + ".tmp", os.path.join(APP_DIR, f))
+    shutil.rmtree(STAGE_DIR, ignore_errors=True)  # don't offer the version we just left straight back
+    print("went back to version", version)
 
 
 def backup_app():
@@ -3672,6 +3700,7 @@ def build_state():
         "live": live_info(), "x": x_view(),
         "storage": storage_state(),
         "github": {"latest": GH["latest"], "error": GH["error"], "checked": GH["checked"], "busy": GH["busy"]},
+        "backups": app_backups(),
     }
 
 
@@ -3833,6 +3862,10 @@ def handle_post(path, body):
         return 200, {"ok": True}
     if path == "/api/sync/dismiss":
         dismiss_request(str(body.get("id", "")))
+        return 200, {"ok": True}
+    if path == "/api/rollback":
+        rollback_to(body.get("version"))
+        threading.Timer(0.6, restart, kwargs={"with_window": bool(body.get("window", True))}).start()
         return 200, {"ok": True}
     if path == "/api/restart":
         if body.get("install"):
