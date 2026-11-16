@@ -1,5 +1,5 @@
 {
- "version": "5.4",
+ "version": "5.5",
  "files": [
   "ui.html",
   "phone.html",
@@ -9,5 +9,5 @@
   "README.md",
   "hub.py"
  ],
- "notes": "RotLab 5.4: Tasks, Calendar, Inventory, Bugs & suggestions, RotRadio, and cameras (up to 3) and screen sharing are back. RotLab now gets its updates from github.com/normanbatesbmotel-boop/rotlab."
+ "notes": "Inventory: sub-places and a proper owner picker. Rename songs. Calendar events open with notes everyone can add. Radio tags in groups, sorted by AI (File > AI automation, your own API key). The version in the corner now matches what's installed."
 }

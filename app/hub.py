@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "5.4"
+HUB_VERSION = "5.5"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -2874,10 +2874,30 @@ def check_for_update():
     """True when a newer version from GitHub is downloaded and waiting for you to install it."""
     st_ = read_json(os.path.join(STAGE_DIR, "manifest.json"), None)
     if st_ and _vtuple(st_.get("version", "0")) > _vtuple(HUB_VERSION) and os.path.isfile(os.path.join(STAGE_DIR, "hub.py")):
-        UPDATE.update({"pending": True, "version": st_.get("version"), "notes": st_.get("notes") or ""})
+        UPDATE.update({"pending": True, "version": st_.get("version"), "notes": st_.get("notes") or "", "on_disk": False})
         return True
+    if UPDATE.get("on_disk"):
+        return False  # disk_version_check owns this one
     UPDATE.update({"pending": False, "version": None, "notes": ""})
     return False
+
+
+def not_the_running_hub():
+    """True when a different RotLab process answers on our port (this one was left behind by a restart)."""
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:%d/api/ping" % PORT, timeout=3) as r:
+            return json.loads(r.read().decode("utf-8")).get("pid") not in (None, os.getpid())
+    except Exception:
+        return False
+
+
+def disk_version_check():
+    """The installer may put a newer version in the program folder while this one runs: offer a restart."""
+    if UPDATE.get("pending"):
+        return
+    v = read_version(SELF)
+    if v != "?" and _vtuple(v) > _vtuple(HUB_VERSION):
+        UPDATE.update({"pending": True, "version": v, "notes": "already installed, restart RotLab to use it", "on_disk": True})
 
 
 def install_staged():
@@ -3054,6 +3074,13 @@ def monitor():
                     radio_tick()
                 except Exception as e:
                     print("radio:", repr(e))
+            if tick % 20 == 7:
+                threading.Thread(target=ai_tick, daemon=True).start()
+            if tick % 10 == 3 and not_the_running_hub():
+                print("another RotLab answers on port %d; this one (v%s) stops" % (PORT, HUB_VERSION))
+                os._exit(0)
+            if tick % 10 == 8:
+                disk_version_check()
             if tick % 6 == 0:
                 check_for_update()  # only tells you; you choose when to install
             if tick % 10 == 4:
@@ -3170,6 +3197,7 @@ def x_state():
             return X_CACHE["state"]
     tasks, cal, locs, items, fb, tracks = {}, {}, {}, {}, {}, {}
     radio_cfg = {"disabled": [], "by": None, "ts": 0}
+    radio_groups = {"groups": [], "by": None, "ts": 0, "model": ""}
     for e in ws_events():
         k, u, ts = e.get("kind") or "", e.get("user"), e.get("ts", 0)
         if not k.startswith(("task_", "cal_", "inv_", "fb_", "radio_")):
@@ -3202,16 +3230,18 @@ def x_state():
         elif k == "cal_new" and e.get("cid"):
             cal[e["cid"]] = {"cid": e["cid"], "title": e.get("title", "Event"), "date": e.get("date", ""),
                              "end": e.get("end", ""), "time": e.get("time", ""), "notes": e.get("notes", ""),
-                             "by": u, "ts": ts, "deleted": False}
+                             "by": u, "ts": ts, "thread": [], "deleted": False}
+        elif k == "cal_note" and e.get("cid") in cal:
+            cal[e["cid"]]["thread"].append({"user": u, "ts": ts, "text": e.get("text", ""), "id": e.get("id")})
         elif k == "cal_set" and e.get("cid") in cal:
             for f in ("title", "date", "end", "time", "notes", "deleted"):
                 if f in e:
                     cal[e["cid"]][f] = e[f]
         elif k == "inv_loc_new" and e.get("lid"):
             locs[e["lid"]] = {"lid": e["lid"], "name": e.get("name", "Place"), "notes": e.get("notes", ""),
-                              "by": u, "ts": ts, "deleted": False}
+                              "parent": e.get("parent", ""), "by": u, "ts": ts, "deleted": False}
         elif k == "inv_loc_set" and e.get("lid") in locs:
-            for f in ("name", "notes", "deleted"):
+            for f in ("name", "notes", "parent", "deleted"):
                 if f in e:
                     locs[e["lid"]][f] = e[f]
         elif k == "inv_item_new" and e.get("iid"):
@@ -3254,16 +3284,141 @@ def x_state():
                     tracks[e["rid"]][f] = e[f]
         elif k == "radio_cfg":
             radio_cfg = {"disabled": e.get("disabled", []), "by": u, "ts": ts}
+        elif k == "radio_groups" and isinstance(e.get("groups"), list):
+            radio_groups = {"groups": e["groups"], "by": u, "ts": ts, "model": e.get("model", "")}
     state = {"tasks": {k: v for k, v in tasks.items() if not v["deleted"]},
              "cal": {k: v for k, v in cal.items() if not v["deleted"]},
              "locs": {k: v for k, v in locs.items() if not v["deleted"]},
              "items": {k: v for k, v in items.items() if not v["deleted"]},
              "feedback": {k: v for k, v in fb.items() if not v["deleted"]},
              "tracks": {k: v for k, v in tracks.items() if not v["removed"]},
-             "radio_cfg": radio_cfg}
+             "radio_cfg": radio_cfg, "radio_groups": radio_groups}
     with WS_LOCK:
         X_CACHE["sig"], X_CACHE["state"] = sig, state
     return state
+
+
+# ---- AI automation (an API key on this PC; only tag names are sent)
+AI_PROVIDERS = {
+    "anthropic": {"label": "Anthropic (Claude)", "url": "https://api.anthropic.com/v1/messages", "model": "claude-haiku-5-5"},
+    "openai": {"label": "OpenAI-compatible (OpenAI, OpenRouter, Groq, Gemini, Ollama...)",
+               "url": "https://api.openai.com/v1/chat/completions", "model": ""},
+}
+AI = {"state": {"busy": False, "error": None, "last": 0}, "tried": 0}
+
+
+def ai_cfg():
+    a = dict(CONFIG.get("ai") or {})
+    prov = a.get("provider") if a.get("provider") in AI_PROVIDERS else "anthropic"
+    a["provider"] = prov
+    a["url"] = a.get("url") or AI_PROVIDERS[prov]["url"]
+    a["model"] = a.get("model") or AI_PROVIDERS[prov]["model"]
+    return a
+
+
+def ai_public():
+    a = ai_cfg()
+    return {"provider": a["provider"], "url": a["url"], "model": a["model"], "has_key": bool(a.get("key")),
+            "auto_tags": bool(a.get("auto_tags", True)), "providers": AI_PROVIDERS, "state": AI["state"]}
+
+
+def ai_chat(prompt, max_tokens=2000):
+    a = ai_cfg()
+    if not a.get("key"):
+        raise ValueError("Add an API key first (File > AI automation)")
+    if not a["model"]:
+        raise ValueError("Choose a model first (File > AI automation)")
+    if not re.match(r"^https?://", a["url"]):
+        raise ValueError("The endpoint must start with https://")
+    if a["provider"] == "anthropic":
+        body = {"model": a["model"], "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
+        headers = {"x-api-key": a["key"], "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    else:
+        body = {"model": a["model"], "temperature": 0, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
+        headers = {"Authorization": "Bearer " + a["key"], "Content-Type": "application/json"}
+    req = urllib.request.Request(a["url"], data=json.dumps(body).encode("utf-8"), headers=dict(headers, **{"User-Agent": "RotLab"}), method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            res = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.loads(e.read().decode("utf-8", "replace"))
+            msg = (msg.get("error") or {}).get("message") if isinstance(msg.get("error"), dict) else msg.get("error") or msg.get("message")
+        except Exception:
+            msg = ""
+        raise ValueError("The AI service said %s%s" % (e.code, (": " + str(msg)[:200]) if msg else ""))
+    except urllib.error.URLError as e:
+        raise ValueError("Couldn't reach the AI service (%s)" % (e.reason,))
+    if a["provider"] == "anthropic":
+        return "".join(c.get("text", "") for c in res.get("content", []) if c.get("type") == "text")
+    return ((res.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+
+
+def _json_from(text):
+    m = re.search(r"\{.*\}", text or "", re.S)
+    if not m:
+        raise ValueError("The AI didn't send back a list of groups")
+    return json.loads(m.group(0))
+
+
+def ai_sort_tags(fresh=True):
+    """Ask the AI to sort the radio's tags into a few named groups (genre, period, mood...). Shared with everyone."""
+    st_ = x_state()
+    tags = sorted(radio_tags(st_))
+    if not tags:
+        raise ValueError("There are no tags yet")
+    old = [] if fresh else st_["radio_groups"]["groups"]
+    AI["state"].update(busy=True, error=None)
+    try:
+        prompt = ("You organise the tags of a shared music radio into groups so people can switch whole groups on and off.\n"
+                  "Make 2 to 10 short, plain group names such as Genre, Era / period, Mood, Instrument, Language, Region, Tempo, Use. "
+                  "Put every tag into exactly one group. Use the tags exactly as written. A tag that fits nowhere goes in \"Other\".\n")
+        if old:
+            prompt += "Keep these existing groups and add the new tags to them (or to new groups if they really don't fit): %s\n" % json.dumps(old)
+        prompt += "Tags: %s\nAnswer with JSON only, like {\"groups\": [{\"name\": \"Genre\", \"tags\": [\"waltz\"]}]}" % json.dumps(tags)
+        data = _json_from(ai_chat(prompt))
+        seen, groups = set(), []
+        for g in data.get("groups", [])[:12]:
+            name = _txt(g.get("name"), 30) or "Other"
+            ts = [t for t in (_tags(g.get("tags"), 500)) if t in tags and t not in seen]
+            seen.update(ts)
+            if ts:
+                ex = next((x for x in groups if x["name"].lower() == name.lower()), None)
+                (ex["tags"].extend(ts) if ex else groups.append({"name": name, "tags": ts}))
+        rest = [t for t in tags if t not in seen]
+        if rest:
+            ex = next((x for x in groups if x["name"].lower() == "other"), None)
+            (ex["tags"].extend(rest) if ex else groups.append({"name": "Other", "tags": rest}))
+        ws_add("radio_groups", groups=groups, model=ai_cfg()["model"])
+        AI["state"].update(last=now())
+        return len(groups)
+    except Exception as e:
+        AI["state"]["error"] = str(e)[:300]
+        raise
+    finally:
+        AI["state"]["busy"] = False
+
+
+def ai_tick():
+    """Automation: when the radio has tags that aren't in a group yet, sort them (the DJ PC first; others step in later)."""
+    a = ai_cfg()
+    if not a.get("key") or not a.get("auto_tags", True) or AI["state"]["busy"] or now() - AI["tried"] < 600:
+        return
+    st_ = x_state()
+    grouped = {t for g in st_["radio_groups"]["groups"] for t in g.get("tags", [])}
+    new = [t for t in radio_tags(st_) if t not in grouped]
+    if not new:
+        return
+    newest = max((t["ts"] for t in st_["tracks"].values()), default=0)
+    if now() - newest < 30 or now() - st_["radio_groups"]["ts"] < 120:
+        return  # songs are still being added, or someone just sorted
+    if radio_dj() != me() and now() - newest < 900:
+        return
+    AI["tried"] = now()
+    try:
+        ai_sort_tags(fresh=not st_["radio_groups"]["groups"])
+    except Exception as e:
+        print("AI tag sort:", repr(e))
 
 
 # ---- RotRadio
@@ -3387,7 +3542,7 @@ def radio_view():
         except ValueError:
             t["here"] = False
     return {"queue": q[:6], "dj": radio_dj(), "tags": radio_tags(st_), "disabled": st_["radio_cfg"]["disabled"],
-            "cfg_by": st_["radio_cfg"]["by"], "tracks": tracks, "playable": len(radio_eligible(st_)),
+            "cfg_by": st_["radio_cfg"]["by"], "tracks": tracks, "groups": st_["radio_groups"], "ai_tags": AI["state"], "playable": len(radio_eligible(st_)),
             "folder": rel(RADIO_MUSIC)}
 
 
@@ -3475,14 +3630,51 @@ def x_post(path, b):
             d["deleted"] = True
         ws_add("cal_set", cid=b.get("cid"), **d)
         return 200, {"ok": True}
+    if p == "cal_note":
+        text = _txt(b.get("text"), 4000)
+        if b.get("cid") not in st_["cal"]:
+            raise ValueError("That event is gone")
+        if text:
+            ws_add("cal_note", cid=b["cid"], text=text)
+        return 200, {"ok": True}
+    if p == "ai_get":
+        return 200, ai_public()
+    if p == "ai_set":
+        a = dict(CONFIG.get("ai") or {})
+        if b.get("provider") in AI_PROVIDERS:
+            a["provider"] = b["provider"]
+        for f, n in (("url", 300), ("model", 120)):
+            if f in b:
+                a[f] = _txt(b[f], n)
+        if b.get("key"):
+            a["key"] = _txt(b["key"], 400)
+        if b.get("remove_key"):
+            a.pop("key", None)
+        if "auto_tags" in b:
+            a["auto_tags"] = bool(b["auto_tags"])
+        CONFIG["ai"] = a
+        save_config()
+        return 200, ai_public()
+    if p == "ai_test":
+        txt = ai_chat('Reply with exactly this JSON and nothing else: {"ok": true}', max_tokens=50)
+        return 200, {"ok": True, "reply": txt[:200]}
+    if p == "ai_sort_tags":
+        n = ai_sort_tags(fresh=bool(b.get("fresh", True)))
+        return 200, {"ok": True, "groups": n}
+    if p == "radio_groups_clear":
+        ws_add("radio_groups", groups=[], model="")
+        return 200, {"ok": True}
     if p == "loc_new":
         name = _txt(b.get("name"), 80)
         if not name:
             raise ValueError("Name the place")
-        if any(l["name"].lower() == name.lower() for l in st_["locs"].values()):
+        if any(l["name"].lower() == name.lower() and l.get("parent", "") == _txt(b.get("parent"), 20) for l in st_["locs"].values()):
             raise ValueError("There's already a place called " + name)
+        parent = _txt(b.get("parent"), 20)
+        if parent and (parent not in st_["locs"] or st_["locs"][parent].get("parent")):
+            raise ValueError("Sub-places can only go inside a top-level place")
         lid = uuid.uuid4().hex[:10]
-        ws_add("inv_loc_new", lid=lid, name=name, notes=_txt(b.get("notes"), 500))
+        ws_add("inv_loc_new", lid=lid, name=name, notes=_txt(b.get("notes"), 500), parent=parent)
         return 200, {"ok": True, "lid": lid}
     if p == "loc_set":
         lid = b.get("lid")
@@ -3491,9 +3683,19 @@ def x_post(path, b):
             d["name"] = _txt(b["name"], 80) or "Place"
         if "notes" in b:
             d["notes"] = _txt(b["notes"], 500)
+        if "parent" in b:
+            parent = _txt(b["parent"], 20)
+            if parent:
+                if parent == lid or parent not in st_["locs"] or st_["locs"][parent].get("parent"):
+                    raise ValueError("Sub-places can only go inside a top-level place")
+                if any(l.get("parent") == lid for l in st_["locs"].values()):
+                    raise ValueError("This place has its own sub-places, so it can't go inside another one")
+            d["parent"] = parent
         if b.get("deleted"):
             if any(i["loc"] == lid for i in st_["items"].values()):
                 raise ValueError("Move or delete the things in this place first")
+            if any(l.get("parent") == lid for l in st_["locs"].values()):
+                raise ValueError("Delete or move its sub-places first")
             d["deleted"] = True
         ws_add("inv_loc_set", lid=lid, **d)
         return 200, {"ok": True}
@@ -3835,7 +4037,9 @@ def handle_post(path, body):
         dismiss_request(str(body.get("id", "")))
         return 200, {"ok": True}
     if path == "/api/restart":
-        if body.get("install"):
+        if body.get("install") and UPDATE.get("on_disk"):
+            pass  # the new version is already in the program folder: just restart into it
+        elif body.get("install"):
             ver = UPDATE.get("version")
             if not install_staged():
                 return 200, {"ok": False, "error": "no update"}
@@ -3891,6 +4095,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
+        elif u.path == "/api/ping":
+            self._json(200, {"pid": os.getpid(), "version": HUB_VERSION})
         elif u.path == "/api/state":
             q = parse_qs(u.query)
             if q.get("focused", ["0"])[0] == "1":
