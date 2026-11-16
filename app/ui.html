@@ -177,7 +177,8 @@ label.ck{display:flex;gap:6px;align-items:center}
    <button data-act="openproj">Open project folder</button>
    <button data-act="openinbox">Open Inbox folder</button>
    <button data-act="sortinbox">Sort Inbox now</button><hr>
-   <button data-act="settings">Settings...</button><hr>
+   <button data-act="settings">Settings...</button>
+   <button data-act="ai">AI automation...</button><hr>
    <button data-act="quit">Quit RotLab</button></div></div>
   <div class="mi"><button><u>P</u>roject</button><div class="drop out">
    <button data-act="projset">Rename / change type...</button>
@@ -286,6 +287,7 @@ async function act(a){try{
  else if(a.startsWith("v-"))setArea(a.slice(2));
  else if(a==="msgonly"){msgOnly=!msgOnly;LS.set("msgonly",msgOnly);$("feed")._last="";renderFeed(true);toast(msgOnly?"Feed shows only messages":"Feed shows messages and changes")}
  else if(a==="reload")location.reload();
+ else if(a==="ai")aiDlg();
  else if(a==="cam")camDlg();else if(a==="screen")avStart("screen");else if(a==="avstop")avStopAll();
  else if(a==="bug")fbNewDlg("bug");else if(a==="idea")fbNewDlg("suggestion");
  else if(a==="sync")syncDlg();else if(a==="phone")phoneDlg();else if(a==="about")aboutDlg();
@@ -954,7 +956,7 @@ function bindX(){const v=$("view");
  v.querySelectorAll("[data-xf]").forEach(b=>b.onclick=()=>{const [k,val]=b.dataset.xf.split(":");xf[k]=val;LS.set("xf_"+k,val);renderX(true)});
  v.querySelectorAll("[data-task]").forEach(b=>b.onclick=e=>{e.preventDefault();taskDlg(b.dataset.task)});
  v.querySelectorAll("[data-tstat]").forEach(s=>s.onchange=async()=>{try{await api("/api/x/task_set",{tid:s.dataset.tstat,status:s.value});await tick()}catch(e){toast(e.message)}});
- v.querySelectorAll("[data-cev]").forEach(b=>b.onclick=e=>{e.stopPropagation();calEventDlg(b.dataset.cev)});
+ v.querySelectorAll("[data-cev]").forEach(b=>b.onclick=e=>{e.stopPropagation();calViewDlg(b.dataset.cev)});
  v.querySelectorAll("[data-cday]").forEach(c=>c.onclick=e=>{if(e.target.closest("[data-task],[data-cev]"))return;calEventDlg(null,c.dataset.cday)});
  v.querySelectorAll("[data-cnav]").forEach(b=>b.onclick=()=>{const n=+b.dataset.cnav;if(n===0)xf.cal=null;else{const [y,m]=calMonth();const d=new Date(y,m+n,1);xf.cal=[d.getFullYear(),d.getMonth()]}renderX(true)});
  v.querySelectorAll("[data-loc]").forEach(b=>b.onclick=()=>{xf.inv=b.dataset.loc;renderX(true)});
@@ -1038,47 +1040,10 @@ function calEventDlg(cid,date){const c=cid?X().cal.find(x=>x.cid===cid):{title:"
  <label class="dim" for="cN">Notes</label><textarea id="cN" class="field" rows="3" style="width:100%">${esc(c.notes)}</textarea>${cid?`<div class="dim">Added by ${esc(who(c.by))}</div>`:""}
  <div class="btns">${cid?'<button class="btn" id="cDel">Delete</button>':""}<button class="btn b" id="cOk">${cid?"Save":"Add event"}</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
  $("cOk").onclick=async()=>{const b={title:$("cT").value.trim(),date:$("cD").value,end:$("cE").value,time:$("cTm").value,notes:$("cN").value};if(!b.title||!b.date)return toast("Give it a title and a date");
-  try{await api(cid?"/api/x/cal_set":"/api/x/cal_new",cid?Object.assign(b,{cid}):b);closeDlg();tick()}catch(e){toast(e.message)}};
+  try{await api(cid?"/api/x/cal_set":"/api/x/cal_new",cid?Object.assign(b,{cid}):b);await tick();if(cid)calViewDlg(cid);else closeDlg()}catch(e){toast(e.message)}};
  if(cid)$("cDel").onclick=async()=>{if(confirm("Delete this event for everyone?")){await api("/api/x/cal_set",{cid,deleted:true});closeDlg();tick()}}}
 
 /* ---- inventory ---- */
-function invHtml(){const x=X(),locs=x.locs,cnt=l=>x.items.filter(i=>i.loc===l).reduce((a,i)=>a+(+i.qty||0),0);
- const lname=id=>(locs.find(l=>l.lid===id)||{}).name;
- let its=x.items.filter(i=>xf.inv==="all"||(xf.inv==="none"?!lname(i.loc):i.loc===xf.inv));const q=xf.invq.trim().toLowerCase();
- if(q)its=its.filter(i=>[i.name,i.owner,i.cat,i.notes,lname(i.loc)||""].join(" ").toLowerCase().includes(q));
- let h=`<div class="head"><h2>Inventory</h2><span class="dim">everything you own and where it is</span><span style="flex:1"></span><label for="invQ" class="dim">Find:</label><input id="invQ" class="field" style="width:170px" value="${esc(xf.invq)}" placeholder="name, owner, note"><button class="btn sm" data-xact="newloc">+ Place</button><button class="btn b" data-xact="newitem">+ Item</button></div>
- <div style="display:flex;gap:6px;flex:1;min-height:0"><div class="in" style="width:190px;flex:none;overflow:auto;padding:3px">`;
- const lb=(id,name,n,edit)=>`<div class="proj ${xf.inv===id?"sel":""}" data-loc="${esc(id)}" style="display:flex;gap:4px;align-items:center;padding:3px 6px;cursor:pointer;${xf.inv===id?"background:var(--sel);color:#fff":""}"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span><span class="dim" style="${xf.inv===id?"color:#cfd8ff":""}">${n}</span>${edit?`<button class="btn sm" data-locedit="${esc(id)}" title="Rename or delete" aria-label="Edit ${esc(name)}" style="min-height:17px;padding:0 4px">✎</button>`:""}</div>`;
- h+=lb("all","All places",x.items.reduce((a,i)=>a+(+i.qty||0),0),false)+locs.map(l=>lb(l.lid,l.name,cnt(l.lid),true)).join("");
- const nopl=x.items.filter(i=>!lname(i.loc));if(nopl.length)h+=lb("none","No place set",nopl.length,false);
- if(!locs.length)h+=`<div class="dim" style="padding:6px;font-size:12px">Add places (a room, a shelf, a bag, someone's house) with + Place.</div>`;
- h+=`</div><div class="in" style="flex:1;overflow:auto">`;
- if(!its.length)h+=`<div class="empty">${x.items.length?"Nothing here.":"No items yet. Add your gear with + Item and say where it's kept."}</div>`;
- else h+=`<table><thead><tr><th>Item</th><th>Qty</th><th>Where</th><th>Owner</th><th>Type</th><th>Notes</th></tr></thead><tbody>${its.map(i=>`<tr><td><a data-item="${esc(i.iid)}"><b>${esc(i.name)}</b></a></td><td>${esc(i.qty)}</td>
-  <td><select class="field" data-imove="${esc(i.iid)}" aria-label="Where ${esc(i.name)} is"><option value="">(not set)</option>${locs.map(l=>`<option value="${esc(l.lid)}" ${i.loc===l.lid?"selected":""}>${esc(l.name)}</option>`).join("")}</select><div class="dim" style="font-size:11px">moved ${esc(dayName(i.moved).toLowerCase())} by ${esc(who(i.moved_by))}</div></td>
-  <td>${esc(i.owner)}</td><td>${esc(i.cat)}</td><td class="dim" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(i.notes)}">${esc(i.notes)}</td></tr>`).join("")}</tbody></table>`;
- return h+"</div></div>"}
-function locDlg(lid){const l=lid?X().locs.find(x=>x.lid===lid):{name:"",notes:""};if(!l)return;
- openDlg(lid?"Place":"New place",`<label class="dim" for="lN">Name</label><input id="lN" class="field" style="width:100%" maxlength="80" value="${esc(l.name)}" placeholder="e.g. Garage shelf 2, Sam's house, Camera bag">
- <label class="dim" for="lNo">Notes</label><input id="lNo" class="field" style="width:100%" value="${esc(l.notes)}">
- <div class="btns">${lid?'<button class="btn" id="lDel">Delete place</button>':""}<button class="btn b" id="lOk">${lid?"Save":"Add place"}</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
- $("lOk").onclick=async()=>{const name=$("lN").value.trim();if(!name)return toast("Name the place");try{const r=await api(lid?"/api/x/loc_set":"/api/x/loc_new",lid?{lid,name,notes:$("lNo").value}:{name,notes:$("lNo").value});closeDlg();if(!lid)xf.inv=r.lid;await tick();renderX(true)}catch(e){toast(e.message)}};
- if(lid)$("lDel").onclick=async()=>{try{await api("/api/x/loc_set",{lid,deleted:true});closeDlg();xf.inv="all";await tick();renderX(true)}catch(e){toast(e.message)}}}
-function itemDlg(iid){const x=X(),i=iid?x.items.find(y=>y.iid===iid):{name:"",qty:1,loc:["all","none"].includes(xf.inv)?"":xf.inv,owner:S.me,cat:"",notes:""};if(!i)return;
- const cats=[...new Set(x.items.map(y=>y.cat).filter(Boolean))];
- openDlg(iid?"Item":"New item",`<label class="dim" for="iN">Item</label><input id="iN" class="field" style="width:100%" maxlength="120" value="${esc(i.name)}" placeholder="e.g. Sony A6400, tripod, ring light">
- <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end"><div><label class="dim" for="iQ">How many</label><br><input id="iQ" type="number" min="0" class="field" style="width:80px" value="${esc(i.qty)}"></div>
- <div><label class="dim" for="iL">Where it is</label><br><select id="iL" class="field"><option value="">(not set)</option>${x.locs.map(l=>`<option value="${esc(l.lid)}" ${i.loc===l.lid?"selected":""}>${esc(l.name)}</option>`).join("")}<option value="__new">+ New place...</option></select></div>
- <div><label class="dim" for="iO">Owner</label><br><input id="iO" class="field" list="iOl" value="${esc(i.owner)}"><datalist id="iOl">${(x.people||[]).map(p=>`<option value="${esc(p)}">`).join("")}</datalist></div>
- <div><label class="dim" for="iC">Type</label><br><input id="iC" class="field" list="iCl" value="${esc(i.cat)}" placeholder="Camera, Audio, Lighting..."><datalist id="iCl">${cats.map(c=>`<option value="${esc(c)}">`).join("")}</datalist></div></div>
- <label class="dim" for="iNo">Notes</label><textarea id="iNo" class="field" rows="2" style="width:100%">${esc(i.notes)}</textarea>
- <div class="btns">${iid?'<button class="btn" id="iDel">Delete</button>':""}<button class="btn b" id="iOk">${iid?"Save":"Add item"}</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
- $("iL").onchange=async()=>{if($("iL").value!=="__new")return;const n=prompt("Name of the new place:");if(!n){$("iL").value=i.loc||"";return}
-  try{const r=await api("/api/x/loc_new",{name:n});await tick();const o=document.createElement("option");o.value=r.lid;o.textContent=n;$("iL").insertBefore(o,$("iL").lastElementChild);$("iL").value=r.lid}catch(e){toast(e.message);$("iL").value=i.loc||""}};
- $("iOk").onclick=async()=>{const b={name:$("iN").value.trim(),qty:+$("iQ").value||0,loc:$("iL").value==="__new"?"":$("iL").value,owner:$("iO").value.trim(),cat:$("iC").value.trim(),notes:$("iNo").value};if(!b.name)return toast("Name the item");
-  try{await api(iid?"/api/x/item_set":"/api/x/item_new",iid?Object.assign(b,{iid}):b);closeDlg();tick()}catch(e){toast(e.message)}};
- if(iid)$("iDel").onclick=async()=>{if(confirm("Delete "+i.name+" from the inventory?")){await api("/api/x/item_set",{iid,deleted:true});closeDlg();tick()}}}
-
 /* ---- feedback ---- */
 function fbHtml(){const all=X().feedback;let fs=all.filter(f=>xf.fb==="all"||f.type===xf.fb).filter(f=>xf.fbshow==="all"||(xf.fbshow==="open"?["open","planned"].includes(f.status):["done","wontfix"].includes(f.status)));
  let h=`<div class="head"><h2>Bugs &amp; suggestions</h2>${chipsF("fb",[["all","All"],["bug","Bugs"],["suggestion","Suggestions"]])}${chipsF("fbshow",[["open","Open"],["closed","Closed"],["all","Everything"]])}<span style="flex:1"></span><button class="btn" data-xact="bug">🐞 Report a bug</button><button class="btn b" data-xact="idea">💡 Suggest something</button></div>`;
@@ -1145,12 +1110,6 @@ function renderRadio(){if(!S||!S.configured)return;const r=X().radio,n=radioNow(
  $("raTags").onclick=radioTagsDlg;$("raAdd").onclick=radioAddDlg;$("raList").onclick=radioListDlg;if($("raTune"))$("raTune").onclick=()=>{RA.blocked=false;radioPlayer();renderRadio()}}
 document.addEventListener("click",()=>{if(RA.blocked){radioPlayer()}},true);
 setInterval(()=>{if(S&&S.configured){radioPlayer();renderRadio()}},1000);
-function radioTagsDlg(){const r=X().radio,tags=Object.entries(r.tags).sort((a,b)=>b[1]-a[1]);
- openDlg("RotRadio: tags",`<div class="dim">The radio picks songs that have at least one ticked tag. This is shared: it changes what everyone hears.${r.cfg_by?" Last changed by "+esc(who(r.cfg_by))+".":""}</div>
- <div class="in" style="max-height:50vh;overflow:auto;padding:6px 8px;column-width:160px">${tags.length?tags.map(([g,n])=>`<label style="display:block"><input type="checkbox" class="raTg" value="${esc(g)}" ${r.disabled.includes(g)?"":"checked"}> ${esc(g)} <span class="dim">(${n})</span></label>`).join(""):'<span class="dim">No tags yet: they come from the songs.</span>'}</div>
- <div class="btns"><button class="btn" id="raAll">Tick all</button><button class="btn" id="raNone">Untick all</button><button class="btn b" id="raSave">Save</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
- $("raAll").onclick=()=>document.querySelectorAll(".raTg").forEach(c=>c.checked=true);$("raNone").onclick=()=>document.querySelectorAll(".raTg").forEach(c=>c.checked=false);
- $("raSave").onclick=async()=>{const off=[...document.querySelectorAll(".raTg")].filter(c=>!c.checked).map(c=>c.value);try{await api("/api/x/radio_cfg",{disabled:off});closeDlg();toast("Saved. The radio switches after the song that's playing.");tick()}catch(e){toast(e.message)}}}
 function audioDur(f){return new Promise(res=>{const a=new Audio(),u=URL.createObjectURL(f);a.preload="metadata";const done=v=>{URL.revokeObjectURL(u);res(v)};a.onloadedmetadata=()=>done(isFinite(a.duration)?a.duration:0);a.onerror=()=>done(0);setTimeout(()=>done(0),15000);a.src=u})}
 let raFiles=[];
 function radioAddDlg(){raFiles=[];const known=Object.keys(X().radio.tags).sort();
@@ -1177,15 +1136,6 @@ async function raUpload(){$("raUp").disabled=true;let done=0;
    await api("/api/x/radio_add",{file:saved,title:document.querySelector(`.raT[data-i="${i}"]`).value,artist:document.querySelector(`.raA[data-i="${i}"]`).value,tags:raTagsOf(i),dur:r.dur});done++}
   catch(e){toast(r.f.name+": "+e.message)}}
  closeDlg();toast(`Added ${done} song${done===1?"":"s"}. New songs join the radio in about a minute.`);tick()}
-function radioListDlg(){const r=X().radio;
- openDlg("RotRadio: all songs ("+r.tracks.length+")",`<div class="in" style="max-height:60vh;overflow:auto"><table><thead><tr><th>Song</th><th>Tags</th><th>Length</th><th>Added by</th><th></th></tr></thead><tbody>${r.tracks.map(t=>`<tr><td><b>${esc(t.title)}</b>${t.artist?` <span class="dim">${esc(t.artist)}</span>`:""}${t.here?"":' <span class="dim">(syncing)</span>'}</td><td>${t.tags.map(g=>`<span class="tag" style="${r.disabled.includes(g)?"opacity:.45":""}">${esc(g)}</span>`).join("")}</td><td>${dur(t.dur)}</td><td>${esc(who(t.by))}</td>
-  <td style="white-space:nowrap"><button class="btn sm" data-rtag="${esc(t.rid)}">Tags...</button> <button class="btn sm" data-rdel="${esc(t.rid)}">Remove</button></td></tr>`).join("")||'<tr><td colspan="5" class="dim">No songs yet.</td></tr>'}</tbody></table></div>
- <div class="btns"><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true});
- document.querySelectorAll("[data-rtag]").forEach(b=>b.onclick=async()=>{const t=r.tracks.find(x=>x.rid===b.dataset.rtag);const v=prompt("Tags for "+t.title+" (comma separated, at least 3):",t.tags.join(", "));if(v===null)return;
-  try{await api("/api/x/radio_track_set",{rid:t.rid,tags:v.split(",")});await tick();radioListDlg()}catch(e){toast(e.message)}});
- document.querySelectorAll("[data-rdel]").forEach(b=>b.onclick=async()=>{const t=r.tracks.find(x=>x.rid===b.dataset.rdel);if(!confirm("Remove "+t.title+" from RotRadio for everyone? (The file stays in _hub\\radio\\music.)"))return;
-  try{await api("/api/x/radio_track_set",{rid:t.rid,removed:true});await tick();radioListDlg()}catch(e){toast(e.message)}})}
-
 /* ---- cameras & screen sharing (peer to peer; set up through the encrypted live layer) ---- */
 const AV_MAX_CAMS=3,AV_ICE=[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.google.com:19302"},{urls:"stun:stun.cloudflare.com:3478"}];
 const AV={mine:new Map(),peers:new Map(),remote:new Map(),streams:new Map(),open:LS.get("av_open",true),big:null,lastSent:0};
@@ -1257,6 +1207,131 @@ async function camDlg(){if(!navigator.mediaDevices)return toast("This window can
  <div class="dim">Video goes straight to the other people's RotLab (peer to peer). It may not connect on some school, work or mobile networks.</div>
  <div class="btns"><button class="btn b" id="camGo" ${!devs.length||left<=0?"disabled":""}>${left<=0?"All "+AV_MAX_CAMS+" cameras are on":"Turn on"}</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
  if($("camGo")&&devs.length)$("camGo").onclick=()=>{const id=$("camSel").value,mic=$("camMic").checked;closeDlg();avStart("cam",id,mic)}}
+
+/* ---- inventory (places with one level of sub-places) ---- */
+let invOpen=LS.get("inv_open",{});
+const locById=id=>X().locs.find(l=>l.lid===id);
+const locPath=id=>{const l=locById(id);if(!l)return"";const p=l.parent&&locById(l.parent);return p?p.name+" › "+l.name:l.name};
+const locTops=()=>X().locs.filter(l=>!l.parent||!locById(l.parent));
+const locKids=id=>X().locs.filter(l=>l.parent===id);
+const locIn=(lid,sel)=>lid===sel||(locById(lid)||{}).parent===sel;
+function locOptions(cur){return locTops().map(t=>`<option value="${esc(t.lid)}" ${cur===t.lid?"selected":""}>${esc(t.name)}</option>`+locKids(t.lid).map(k=>`<option value="${esc(k.lid)}" ${cur===k.lid?"selected":""}>   ↳ ${esc(k.name)}</option>`).join("")).join("")}
+function invHtml(){const x=X(),qty=its=>its.reduce((a,i)=>a+(+i.qty||0),0);
+ let its=x.items.filter(i=>xf.inv==="all"||(xf.inv==="none"?!locById(i.loc):locIn(i.loc,xf.inv)));const q=xf.invq.trim().toLowerCase();
+ if(q)its=its.filter(i=>[i.name,i.owner,i.cat,i.notes,locPath(i.loc)].join(" ").toLowerCase().includes(q));
+ let h=`<div class="head"><h2>Inventory</h2><span class="dim">everything you own and where it is</span><span style="flex:1"></span><label for="invQ" class="dim">Find:</label><input id="invQ" class="field" style="width:170px" value="${esc(xf.invq)}" placeholder="name, owner, note"><button class="btn sm" data-xact="newloc">+ Place</button><button class="btn b" data-xact="newitem">+ Item</button></div>
+ <div style="display:flex;gap:6px;flex:1;min-height:0"><div class="in" style="width:210px;flex:none;overflow:auto;padding:3px">`;
+ const row=(id,name,n,opt)=>{const sel=xf.inv===id;return `<div data-loc="${esc(id)}" style="display:flex;gap:3px;align-items:center;padding:3px 4px 3px ${opt.sub?22:4}px;cursor:pointer;${sel?"background:var(--sel);color:#fff":""}">
+  ${opt.tog!==undefined?`<button class="btn sm" data-ltog="${esc(id)}" aria-label="${opt.tog?"Collapse":"Expand"} ${esc(name)}" style="min-height:16px;padding:0 3px;font-size:10px">${opt.tog?"▾":"▸"}</button>`:opt.sub||id==="all"||id==="none"?"":'<span style="width:17px;flex:none"></span>'}
+  <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span><span class="dim" style="${sel?"color:#cfd8ff":""}">${n}</span>
+  ${opt.edit?`<button class="btn sm" data-locsub="${esc(id)}" title="Add a sub-place inside ${esc(name)}" aria-label="Add a sub-place inside ${esc(name)}" style="min-height:16px;padding:0 4px;${opt.sub?"visibility:hidden":""}">+</button><button class="btn sm" data-locedit="${esc(id)}" title="Rename, move or delete" aria-label="Edit ${esc(name)}" style="min-height:16px;padding:0 4px">✎</button>`:""}</div>`};
+ h+=row("all","All places",qty(x.items),{});
+ for(const t of locTops()){const kids=locKids(t.lid),open=invOpen[t.lid]!==false;
+  h+=row(t.lid,t.name,qty(x.items.filter(i=>locIn(i.loc,t.lid))),{edit:true,tog:kids.length?open:undefined});
+  if(open)for(const k of kids)h+=row(k.lid,k.name,qty(x.items.filter(i=>i.loc===k.lid)),{edit:true,sub:true})}
+ const nopl=x.items.filter(i=>!locById(i.loc));if(nopl.length)h+=row("none","No place set",qty(nopl),{});
+ if(!x.locs.length)h+=`<div class="dim" style="padding:6px;font-size:12px">Add places (a room, a shelf, a bag, someone's house) with + Place. Each place can have sub-places, like shelves in a cupboard.</div>`;
+ h+=`</div><div class="in" style="flex:1;overflow:auto">`;
+ if(!its.length)h+=`<div class="empty">${x.items.length?"Nothing here.":"No items yet. Add your gear with + Item and say where it's kept."}</div>`;
+ else h+=`<table><thead><tr><th>Item</th><th>Qty</th><th>Where</th><th>Owner</th><th>Type</th><th>Notes</th></tr></thead><tbody>${its.map(i=>`<tr><td><a data-item="${esc(i.iid)}"><b>${esc(i.name)}</b></a></td><td>${esc(i.qty)}</td>
+  <td><select class="field" data-imove="${esc(i.iid)}" aria-label="Where ${esc(i.name)} is"><option value="">(not set)</option>${locOptions(i.loc)}</select><div class="dim" style="font-size:11px">moved ${esc(dayName(i.moved).toLowerCase())} by ${esc(who(i.moved_by))}</div></td>
+  <td>${i.owner?esc(who(i.owner)):'<span class="dim">-</span>'}</td><td>${esc(i.cat)}</td><td class="dim" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(i.notes)}">${esc(i.notes)}</td></tr>`).join("")}</tbody></table>`;
+ return h+"</div></div>"}
+document.addEventListener("click",e=>{const t=e.target.closest("[data-ltog],[data-locsub]");if(!t||!$("view").contains(t))return;e.stopPropagation();
+ if(t.dataset.ltog){const id=t.dataset.ltog;invOpen[id]=invOpen[id]===false;LS.set("inv_open",invOpen);renderX(true)}else locDlg(null,t.dataset.locsub)},true);
+function locDlg(lid,parent){const l=lid?locById(lid):{name:"",notes:"",parent:parent||""};if(!l)return;const hasKids=lid&&locKids(lid).length;
+ openDlg(lid?"Place":parent?"New sub-place in "+(locById(parent)||{}).name:"New place",`<label class="dim" for="lN">Name</label><input id="lN" class="field" style="width:100%" maxlength="80" value="${esc(l.name)}" placeholder="${parent?"e.g. Top shelf, Drawer 2, Left bag pocket":"e.g. Garage, Sam's house, Camera bag"}">
+ <label class="dim" for="lP">Inside</label><select id="lP" class="field" style="width:100%" ${hasKids?"disabled":""}><option value="">Nothing (a top-level place)</option>${locTops().filter(t=>t.lid!==lid).map(t=>`<option value="${esc(t.lid)}" ${l.parent===t.lid?"selected":""}>${esc(t.name)}</option>`).join("")}</select>
+ ${hasKids?'<div class="dim" style="font-size:12px">This place has sub-places, so it stays at the top level.</div>':""}
+ <label class="dim" for="lNo">Notes</label><input id="lNo" class="field" style="width:100%" value="${esc(l.notes)}">
+ <div class="btns">${lid?'<button class="btn" id="lDel">Delete place</button>':""}<button class="btn b" id="lOk">${lid?"Save":"Add place"}</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
+ $("lOk").onclick=async()=>{const name=$("lN").value.trim();if(!name)return toast("Name the place");const b={name,notes:$("lNo").value};if(!hasKids)b.parent=$("lP").value;
+  try{const r=await api(lid?"/api/x/loc_set":"/api/x/loc_new",lid?Object.assign(b,{lid}):b);closeDlg();if(!lid)xf.inv=r.lid;if(b.parent)invOpen[b.parent]=true;await tick();renderX(true)}catch(e){toast(e.message)}};
+ if(lid)$("lDel").onclick=async()=>{try{await api("/api/x/loc_set",{lid,deleted:true});closeDlg();xf.inv="all";await tick();renderX(true)}catch(e){toast(e.message)}}}
+function ownerOptions(cur){const ppl=[...new Set([...(X().people||[]),S.me,cur].filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+ return `<option value="">(nobody)</option>${ppl.map(p=>`<option value="${esc(p)}" ${cur===p?"selected":""}>${esc(p)}${p===S.me?" (you)":""}</option>`).join("")}<option value="__other">Someone else...</option>`}
+function itemDlg(iid){const x=X(),i=iid?x.items.find(y=>y.iid===iid):{name:"",qty:1,loc:["all","none"].includes(xf.inv)?"":xf.inv,owner:S.me,cat:"",notes:""};if(!i)return;
+ const cats=[...new Set(x.items.map(y=>y.cat).filter(Boolean))];
+ openDlg(iid?"Item":"New item",`<label class="dim" for="iN">Item</label><input id="iN" class="field" style="width:100%" maxlength="120" value="${esc(i.name)}" placeholder="e.g. Sony A6400, tripod, ring light">
+ <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end"><div><label class="dim" for="iQ">How many</label><br><input id="iQ" type="number" min="0" class="field" style="width:80px" value="${esc(i.qty)}"></div>
+ <div><label class="dim" for="iL">Where it is</label><br><select id="iL" class="field"><option value="">(not set)</option>${locOptions(i.loc)}<option value="__new">+ New place...</option></select></div>
+ <div><label class="dim" for="iO">Owner</label><br><select id="iO" class="field">${ownerOptions(i.owner)}</select></div>
+ <div><label class="dim" for="iC">Type</label><br><input id="iC" class="field" list="iCl" value="${esc(i.cat)}" placeholder="Camera, Audio, Lighting..."><datalist id="iCl">${cats.map(c=>`<option value="${esc(c)}">`).join("")}</datalist></div></div>
+ <label class="dim" for="iNo">Notes</label><textarea id="iNo" class="field" rows="2" style="width:100%">${esc(i.notes)}</textarea>
+ <div class="btns">${iid?'<button class="btn" id="iDel">Delete</button>':""}<button class="btn b" id="iOk">${iid?"Save":"Add item"}</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
+ let owner=i.owner||"";
+ $("iO").onchange=()=>{if($("iO").value!=="__other"){owner=$("iO").value;return}const n=(prompt("Who owns it?")||"").trim();if(!n){$("iO").value=owner;return}owner=n;$("iO").innerHTML=ownerOptions(n)};
+ $("iL").onchange=async()=>{if($("iL").value!=="__new")return;const n=prompt("Name of the new place:");if(!n){$("iL").value=i.loc||"";return}
+  try{const r=await api("/api/x/loc_new",{name:n});await tick();const o=document.createElement("option");o.value=r.lid;o.textContent=n;$("iL").insertBefore(o,$("iL").lastElementChild);$("iL").value=r.lid}catch(e){toast(e.message);$("iL").value=i.loc||""}};
+ $("iOk").onclick=async()=>{const b={name:$("iN").value.trim(),qty:+$("iQ").value||0,loc:$("iL").value==="__new"?"":$("iL").value,owner,cat:$("iC").value.trim(),notes:$("iNo").value};if(!b.name)return toast("Name the item");
+  try{await api(iid?"/api/x/item_set":"/api/x/item_new",iid?Object.assign(b,{iid}):b);closeDlg();tick()}catch(e){toast(e.message)}};
+ if(iid)$("iDel").onclick=async()=>{if(confirm("Delete "+i.name+" from the inventory?")){await api("/api/x/item_set",{iid,deleted:true});closeDlg();tick()}}}
+
+/* ---- calendar: event view with notes ---- */
+function calViewDlg(cid){const c=X().cal.find(x=>x.cid===cid);if(!c){closeDlg();return toast("That event is gone")}
+ const when=fmtDate(c.date)+(c.end?" – "+fmtDate(c.end):"")+(c.time?" · "+c.time:""),n=daysTo(c.date);
+ openDlg(c.title,`<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap"><b style="font-size:16px">${esc(c.title)}</b><span class="tag">${n<0&&(!c.end||daysTo(c.end)<0)?"past":n===0?"today":n===1?"tomorrow":n>0?"in "+n+" days":"on now"}</span></div>
+ <div>📅 ${esc(when)}</div><div class="dim" style="font-size:12px">Added by ${esc(who(c.by))}, ${esc(dayName(c.ts).toLowerCase())}</div>
+ ${c.notes?`<div class="in" style="padding:6px 8px;white-space:pre-wrap">${linkify(c.notes)}</div>`:""}
+ <div class="dim">Notes</div><div class="in" id="cvThread" style="max-height:240px;overflow:auto;padding:4px 8px">${c.thread.length?c.thread.map(x=>`<div style="margin-bottom:3px"><span class="dim" style="font-size:11px">${esc(dayName(x.ts))} ${esc(tm(x.ts))}</span> <b>${esc(who(x.user))}</b>: <span style="white-space:pre-wrap">${linkify(x.text)}</span></div>`).join(""):'<span class="dim">No notes yet. Write what to bring, who\'s coming, addresses...</span>'}</div>
+ <textarea id="cvNote" class="field" rows="2" style="width:100%" placeholder="Write a note (Ctrl+Enter to add)"></textarea>
+ <div class="btns"><button class="btn b" id="cvAdd">Add note</button><button class="btn" id="cvEdit">Edit event...</button><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true,nofocus:true});
+ const th=$("cvThread");th.scrollTop=th.scrollHeight;
+ const add=async()=>{const v=$("cvNote").value.trim();if(!v)return;try{await api("/api/x/cal_note",{cid,text:v});await tick();calViewDlg(cid)}catch(e){toast(e.message)}};
+ $("cvAdd").onclick=add;$("cvNote").onkeydown=e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey))add()};$("cvEdit").onclick=()=>calEventDlg(cid)}
+
+/* ---- RotRadio: edit songs, grouped tags ---- */
+function songEditDlg(rid){const t=X().radio.tracks.find(x=>x.rid===rid);if(!t)return;
+ openDlg("Edit song",`<label class="dim" for="seT">Title</label><input id="seT" class="field" style="width:100%" maxlength="120" value="${esc(t.title)}">
+ <label class="dim" for="seA">Artist</label><input id="seA" class="field" style="width:100%" maxlength="120" value="${esc(t.artist)}">
+ <label class="dim" for="seG">Tags (comma separated, at least 3)</label><input id="seG" class="field" style="width:100%" value="${esc(t.tags.join(", "))}"><div class="dim" id="seN" style="font-size:12px"></div>
+ <div class="dim" style="font-size:12px">File: ${esc(short(t.file))} · ${dur(t.dur)} · added by ${esc(who(t.by))}</div>
+ <div class="btns"><button class="btn" id="seDel">Remove from radio</button><button class="btn b" id="seOk">Save</button><button class="btn" id="seBack">Back</button></div>`);
+ const cnt=()=>{const n=$("seG").value.split(",").map(s=>s.trim()).filter(Boolean).length;$("seN").textContent=n>=3?n+" tags ✓":"needs "+(3-n)+" more";$("seN").style.color=n>=3?"#7fd18f":"#ffb27a";$("seOk").disabled=n<3||!$("seT").value.trim()};
+ $("seG").oninput=cnt;$("seT").oninput=cnt;cnt();$("seBack").onclick=radioListDlg;
+ $("seOk").onclick=async()=>{try{await api("/api/x/radio_track_set",{rid,title:$("seT").value.trim(),artist:$("seA").value.trim(),tags:$("seG").value.split(",")});await tick();radioListDlg();toast("Saved")}catch(e){toast(e.message)}};
+ $("seDel").onclick=async()=>{if(!confirm("Remove "+t.title+" from RotRadio for everyone? (The file stays in _hub\\radio\\music.)"))return;try{await api("/api/x/radio_track_set",{rid,removed:true});await tick();radioListDlg()}catch(e){toast(e.message)}}}
+function radioListDlg(){const r=X().radio;
+ openDlg("RotRadio: all songs ("+r.tracks.length+")",`<div class="in" style="max-height:60vh;overflow:auto"><table><thead><tr><th>Song</th><th>Tags</th><th>Length</th><th>Added by</th><th></th></tr></thead><tbody>${r.tracks.map(t=>`<tr><td><a data-sedit="${esc(t.rid)}"><b>${esc(t.title)}</b></a>${t.artist?` <span class="dim">${esc(t.artist)}</span>`:""}${t.here?"":' <span class="dim">(syncing)</span>'}</td><td>${t.tags.map(g=>`<span class="tag" style="${r.disabled.includes(g)?"opacity:.45":""}">${esc(g)}</span>`).join("")}</td><td>${dur(t.dur)}</td><td>${esc(who(t.by))}</td>
+  <td><button class="btn sm" data-sedit="${esc(t.rid)}">Edit...</button></td></tr>`).join("")||'<tr><td colspan="5" class="dim">No songs yet.</td></tr>'}</tbody></table></div>
+ <div class="btns"><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true});
+ document.querySelectorAll("[data-sedit]").forEach(b=>b.onclick=()=>songEditDlg(b.dataset.sedit))}
+function radioTagsDlg(){const r=X().radio,cnt=r.tags,all=Object.keys(cnt),gs=(r.groups&&r.groups.groups)||[],inG=new Set(gs.flatMap(g=>g.tags));
+ const groups=gs.map(g=>({name:g.name,tags:g.tags.filter(t=>t in cnt)})).filter(g=>g.tags.length);const rest=all.filter(t=>!inG.has(t)).sort();
+ if(rest.length)groups.push({name:gs.length?"Not grouped yet":"All tags",tags:rest});
+ const ai=S.x&&S.x.radio,ast=(r.ai_tags||{}),open=LS.get("tg_open",{});
+ openDlg("RotRadio: tags",`<div class="dim">The radio picks songs that have at least one ticked tag. This is shared: it changes what everyone hears.${r.cfg_by?" Last changed by "+esc(who(r.cfg_by))+".":""}</div>
+ ${gs.length?`<div class="dim" style="font-size:12px">Groups sorted by ${r.groups.model?"AI ("+esc(r.groups.model)+")":esc(who(r.groups.by))}, ${esc(dayName(r.groups.ts).toLowerCase())}.</div>`:""}
+ <div class="in" style="max-height:52vh;overflow:auto;padding:4px 6px">${groups.length?groups.map((g,gi)=>{const on=g.tags.filter(t=>!r.disabled.includes(t)).length;
+  return `<details data-gi="${gi}" ${open[g.name]!==false?"open":""} style="margin-bottom:4px"><summary style="cursor:pointer;padding:2px 0"><label onclick="event.stopPropagation()"><input type="checkbox" class="raGrp" data-gi="${gi}" ${on===g.tags.length?"checked":""}></label> <b>${esc(g.name)}</b> <span class="dim">${on}/${g.tags.length} on</span></summary>
+  <div style="column-width:150px;padding-left:22px">${g.tags.sort().map(t=>`<label style="display:block"><input type="checkbox" class="raTg" data-gi="${gi}" value="${esc(t)}" ${r.disabled.includes(t)?"":"checked"}> ${esc(t)} <span class="dim">(${cnt[t]})</span></label>`).join("")}</div></details>`}).join(""):'<span class="dim">No tags yet: they come from the songs.</span>'}</div>
+ ${ast.error?`<div style="color:#ffb4b4;font-size:12px">AI: ${esc(ast.error)}</div>`:""}
+ <div class="btns"><button class="btn" id="raAI">${ast.busy?"Sorting...":"✨ Sort into groups with AI"}</button><button class="btn" id="raAll">Tick all</button><button class="btn" id="raNone">Untick all</button><button class="btn b" id="raSave">Save</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`,{wide:true});
+ const sync=gi=>{const tg=[...document.querySelectorAll(`.raTg[data-gi="${gi}"]`)],g=document.querySelector(`.raGrp[data-gi="${gi}"]`),n=tg.filter(c=>c.checked).length;g.checked=n===tg.length;g.indeterminate=n>0&&n<tg.length};
+ document.querySelectorAll(".raGrp").forEach(g=>{sync(g.dataset.gi);g.onchange=()=>{document.querySelectorAll(`.raTg[data-gi="${g.dataset.gi}"]`).forEach(c=>c.checked=g.checked);sync(g.dataset.gi)}});
+ document.querySelectorAll(".raTg").forEach(c=>c.onchange=()=>sync(c.dataset.gi));
+ document.querySelectorAll("details[data-gi]").forEach(d=>d.ontoggle=()=>{open[groups[+d.dataset.gi].name]=d.open;LS.set("tg_open",open)});
+ $("raAll").onclick=()=>{document.querySelectorAll(".raTg").forEach(c=>c.checked=true);document.querySelectorAll(".raGrp").forEach(g=>sync(g.dataset.gi))};
+ $("raNone").onclick=()=>{document.querySelectorAll(".raTg").forEach(c=>c.checked=false);document.querySelectorAll(".raGrp").forEach(g=>sync(g.dataset.gi))};
+ $("raAI").onclick=async()=>{const a=await api("/api/x/ai_get").catch(()=>null);if(!a||!a.has_key){toast("Add an AI API key first");return aiDlg()}
+  $("raAI").disabled=true;$("raAI").textContent="Sorting...";try{const res=await api("/api/x/ai_sort_tags",{fresh:true});await tick();radioTagsDlg();toast("Sorted into "+res.groups+" groups")}catch(e){toast(e.message);$("raAI").disabled=false;$("raAI").textContent="✨ Sort into groups with AI"}};
+ $("raSave").onclick=async()=>{const off=[...document.querySelectorAll(".raTg")].filter(c=>!c.checked).map(c=>c.value);try{await api("/api/x/radio_cfg",{disabled:off});closeDlg();toast("Saved. The radio switches after the song that's playing.");tick()}catch(e){toast(e.message)}}}
+
+/* ---- AI automation settings ---- */
+async function aiDlg(){let a;try{a=await api("/api/x/ai_get")}catch(e){return toast(e.message)}
+ openDlg("AI automation",`<div class="dim">RotLab can use an AI service with your own API key. Right now it does one thing: <b>sorts RotRadio's tags into groups</b> (genre, period, mood...) whenever new tags appear. Only the tag names are sent. The key stays on this PC (it isn't synced to anyone).</div>
+ <label class="dim" for="aiP">Service</label><select id="aiP" class="field" style="width:100%">${Object.entries(a.providers).map(([k,p])=>`<option value="${k}" ${a.provider===k?"selected":""}>${esc(p.label)}</option>`).join("")}</select>
+ <label class="dim" for="aiU">Endpoint</label><input id="aiU" class="field" style="width:100%" value="${esc(a.url)}">
+ <label class="dim" for="aiM">Model</label><input id="aiM" class="field" style="width:100%" value="${esc(a.model)}" placeholder="the model name your service uses">
+ <label class="dim" for="aiK">API key</label><input id="aiK" type="password" class="field" style="width:100%" autocomplete="off" placeholder="${a.has_key?"saved (leave empty to keep it)":"paste your key"}">
+ <label><input type="checkbox" id="aiAuto" ${a.auto_tags?"checked":""}> Automatically sort new radio tags into groups</label>
+ <div id="aiMsg" class="dim" style="font-size:12px">${a.state&&a.state.error?"Last problem: "+esc(a.state.error):a.state&&a.state.last?"Last sorted "+esc(dayName(a.state.last).toLowerCase())+" "+esc(tm(a.state.last)):""}</div>
+ <div class="btns">${a.has_key?'<button class="btn" id="aiRm">Remove key</button>':""}<button class="btn" id="aiTest">Test</button><button class="btn b" id="aiOk">Save</button><button class="btn" onclick="closeDlg()">Close</button></div>`);
+ $("aiP").onchange=()=>{const p=a.providers[$("aiP").value];$("aiU").value=p.url;$("aiM").value=p.model};
+ const save=async()=>{const b={provider:$("aiP").value,url:$("aiU").value.trim(),model:$("aiM").value.trim(),auto_tags:$("aiAuto").checked};if($("aiK").value.trim())b.key=$("aiK").value.trim();return api("/api/x/ai_set",b)};
+ $("aiOk").onclick=async()=>{try{await save();closeDlg();toast("AI settings saved")}catch(e){toast(e.message)}};
+ $("aiTest").onclick=async()=>{$("aiMsg").textContent="Testing...";try{await save();const r=await api("/api/x/ai_test");$("aiMsg").textContent="✓ It works. The AI answered: "+r.reply;$("aiMsg").style.color="#7fd18f"}catch(e){$("aiMsg").textContent="✖ "+e.message;$("aiMsg").style.color="#ffb4b4"}};
+ if($("aiRm"))$("aiRm").onclick=async()=>{if(!confirm("Remove the API key from this PC?"))return;await api("/api/x/ai_set",{remove_key:true});aiDlg()}}
 
 /* ---------------- main loop ---------------- */
 function renderAll(force){if(!S||!S.configured)return;renderProjects();renderForYou();renderTabs();renderCenter(force);renderPeople();renderStatus();renderFeed(false);renderBanners();renderRadio();renderAV();
