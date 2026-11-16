@@ -1,5 +1,5 @@
 {
- "version": "5.7",
+ "version": "5.8",
  "files": [
   "ui.html",
   "phone.html",
@@ -20,5 +20,5 @@
   "emoji-angry.webp",
   "hub.py"
  ],
- "notes": "RotRadio: Skip button (3 skips each per 10 minutes); tag boxes now go on → off → blocked with one click each. Fixed the grin emoji's see-through forehead."
+ "notes": "Fixed RotLab closing itself (two copies could share the port, then one shut down). Radio mute and volume are remembered. New: Broadcast (Call menu): hold a key to talk to everyone while the music dips."
 }

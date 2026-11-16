@@ -97,6 +97,8 @@ td.nm{max-width:300px;overflow:hidden;text-overflow:ellipsis}
 .dot{width:9px;height:9px;border:1px solid #000;display:inline-block;flex:none;background:#555}
 .dot.editing{background:#b48cff}.dot.away{background:#d9a52a}
 .emo{height:22px;vertical-align:middle;margin:-3px 1px}
+#bcBadge{position:fixed;top:62px;left:50%;transform:translateX(-50%);z-index:70;padding:5px 14px;display:none;gap:6px;align-items:center;box-shadow:0 2px 10px #000a}
+.bcDot{width:10px;height:10px;border-radius:50%;background:#e03030;animation:bcp 1s infinite}@keyframes bcp{50%{opacity:.35}}
 .tri{width:15px;height:15px;flex:none;padding:0;border:1px solid #9a9a9a;background:var(--field);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:11px;line-height:1;vertical-align:middle;color:#fff}
 .tri[data-st="on"]{background:#3a6ea5;border-color:#6fa0d8}.tri[data-st="on"]::after{content:"✓"}
 .tri[data-st="bl"]{background:#8a2020;border-color:#d05050}.tri[data-st="bl"]::after{content:"⊘";font-size:12px}
@@ -202,7 +204,8 @@ label.ck{display:flex;gap:6px;align-items:center}
   <div class="mi"><button><u>C</u>all</button><div class="drop out">
    <button data-act="cam">Turn a camera on...</button>
    <button data-act="screen">Share my screen</button>
-   <button data-act="avstop">Stop my cameras &amp; screen</button></div></div>
+   <button data-act="avstop">Stop my cameras &amp; screen</button><hr>
+   <button data-act="bc">Broadcast (push to talk)...</button></div></div>
   <div class="mi"><button><u>S</u>ync</button><div class="drop out"><button data-act="sync">Sync status &amp; linking...</button></div></div>
   <div class="mi"><button>P<u>h</u>one</button><div class="drop out"><button data-act="phone">Upload from phone...</button></div></div>
   <div class="mi"><button><u>H</u>elp</button><div class="drop out"><button data-act="bug">Report a bug...</button><button data-act="idea">Suggest something...</button><hr><button data-act="about">About RotLab</button></div></div>
@@ -296,6 +299,7 @@ async function act(a){try{
  else if(a==="msgonly"){msgOnly=!msgOnly;LS.set("msgonly",msgOnly);$("feed")._last="";renderFeed(true);toast(msgOnly?"Feed shows only messages":"Feed shows messages and changes")}
  else if(a==="reload")location.reload();
  else if(a==="ai")aiDlg();else if(a==="share")shareDlg();
+ else if(a==="bc")bcDlg();
  else if(a==="cam")camDlg();else if(a==="screen")avStart("screen");else if(a==="avstop")avStopAll();
  else if(a==="bug")fbNewDlg("bug");else if(a==="idea")fbNewDlg("suggestion");
  else if(a==="sync")syncDlg();else if(a==="phone")phoneDlg();else if(a==="about")aboutDlg();
@@ -926,7 +930,7 @@ let liveChats=[],typingUntil={},remoteCur={};
 const Live=makeLive({id:ME_ID,brokers:[],
  onstatus:()=>{if(S)renderStatus()},
  onconnect:()=>Live.send({t:"hi",u:S&&S.me}),
- onmessage:m=>{if(!S||m.u===S.me)return;if(avOnLive(m))return;
+ onmessage:m=>{if(!S||m.u===S.me)return;if(bcOnLive(m))return;if(avOnLive(m))return;
   if(m.t==="chat"){liveChats.push({ts:m.ts,user:m.u,text:m.text});typingUntil[m.u]=0;renderFeed(false);renderTyping();
    if(!focused&&window.Notification&&Notification.permission==="granted")new Notification("RotLab",{body:m.u+": "+m.text});lastSeenTs=Math.max(lastSeenTs||0,m.ts)}
   else if(m.t==="typing"){typingUntil[m.u]=Date.now()+4000;renderTyping()}
@@ -1088,26 +1092,27 @@ document.addEventListener("click",e=>{const a=e.target.closest("#feed [data-task
 const RA={el:null,cur:null,unlocked:false,blocked:false,muted:LS.get("radio_muted",false),vol:LS.get("radio_vol",0.6)};
 function radioNow(){const q=X().radio.queue||[],t=Date.now()/1000;return q.find(x=>x.start<=t&&t<x.start+x.dur)||null}
 function radioNext(){const q=X().radio.queue||[],t=Date.now()/1000;return q.find(x=>x.start>t)||null}
-function radioPlayer(){const a=$("radioAudio"),n=radioNow(),t=Date.now()/1000;a.volume=RA.vol;
+function radioPlayer(){radioPrefsInit();const a=$("radioAudio"),n=radioNow(),t=Date.now()/1000;
  if(!n||!n.here||RA.muted){if(!a.paused)a.pause();RA.cur=n?n.start+n.file:null;return}
  const key=n.start+n.file,want=t-n.start,src="/media?path="+encodeURIComponent(n.file);
  if(RA.cur!==key){RA.cur=key;a.src=src;a.currentTime=Math.max(0,want)}
  else if(Math.abs(a.currentTime-want)>1.5&&a.readyState>0)a.currentTime=Math.max(0,want);
  if(a.paused)a.play().then(()=>{RA.blocked=false}).catch(()=>{RA.blocked=true;renderRadio()})}
-function renderRadio(){if(!S||!S.configured)return;const r=X().radio,n=radioNow(),nx=radioNext(),t=Date.now()/1000;
+function renderRadio(){if(!S||!S.configured)return;radioPrefsInit();const r=X().radio,n=radioNow(),nx=radioNext(),t=Date.now()/1000;
  let h=`<div style="display:flex;gap:4px;align-items:center"><b style="flex:1;white-space:nowrap">📻 RotRadio</b><button class="btn sm" id="raMute" title="${RA.muted?"Unmute":"Mute"} (only on this PC)" aria-label="${RA.muted?"Unmute":"Mute"}">${RA.muted?"🔇":"🔊"}</button><input id="raVol" type="range" min="0" max="1" step="0.05" value="${RA.vol}" style="width:70px" aria-label="Radio volume"></div>`;
  const sl=r.skips_left??3,again=r.skip_again?Math.max(1,Math.round((r.skip_again-t)/60)):0;
- const raBtns=`<div style="display:flex;gap:4px;margin-top:2px">${n?`<button class="btn sm" id="raSkip" ${sl?"":"disabled"} title="${sl?`Skip this song for everyone. You have ${sl} of ${r.skips_allowed||3} skips left (they come back 10 minutes after you use them)`:`No skips left. Next one in ${again} min`}">⏭ Skip <span class="dim">${sl}</span></button>`:""}<button class="btn sm" id="raAdd" title="Add songs">+ Song</button><button class="btn sm" id="raTags" title="Choose which tags the radio plays">Tags</button><button class="btn sm" id="raList" title="All songs">Songs</button></div>`;
+ const raBtns=`<div style="display:flex;gap:4px;margin-top:2px">${n?`<button class="btn sm" id="raSkip" ${sl?"":"disabled"} title="${sl?`Skip this song for everyone. You have ${sl} of ${r.skips_allowed||3} skips left (they come back 10 minutes after you use them)`:`No skips left. Next one in ${again} min`}">⏭ Skip <span class="dim">${sl}</span></button>`:""}<button class="btn sm" id="raBc" title="Hold to broadcast your microphone to everyone (or hold ${esc(bcKeyName(bcCfg().key))})" aria-label="Hold to broadcast">📢</button><button class="btn sm" id="raAdd" title="Add songs">+ Song</button><button class="btn sm" id="raTags" title="Choose which tags the radio plays">Tags</button><button class="btn sm" id="raList" title="All songs">Songs</button></div>`;
  if(n){const p=Math.min(100,(t-n.start)/n.dur*100);
   h+=`<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(n.title)}"><b>${esc(n.title)}</b>${n.artist?` <span class="dim">· ${esc(n.artist)}</span>`:""}</div><div style="height:4px;background:#333;margin:2px 0"><div style="height:4px;width:${p.toFixed(1)}%;background:#7aa2ff"></div></div>
   <div class="dim" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${dur(t-n.start)} / ${dur(n.dur)} · from ${esc(who(n.by))} · ${n.tags.map(esc).join(", ")}${!n.here?" · <span style='color:#ffcf6a'>still syncing to this PC</span>":""}</div>${nx?`<div class="dim" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Next: ${esc(nx.title)}</div>`:""}`;
   if(RA.blocked&&!RA.muted)h+=`<button class="btn sm b" id="raTune" style="width:100%">▶ Click to tune in</button>`}
  else h+=`<div class="dim" style="font-size:12px">${!r.tracks.length?"No songs yet. Add some with + Song: everyone hears the same thing at the same time.":r.playable?"Starting the next song...":"No songs match the tags that are on, or new songs are still syncing (about a minute)."}</div>`;
  h+=raBtns;const box=$("radio");if(box._h===h)return;const vf=document.activeElement&&document.activeElement.id==="raVol";if(vf)return;box.innerHTML=h;box._h=h;
- $("raMute").onclick=()=>{RA.muted=!RA.muted;LS.set("radio_muted",RA.muted);RA.unlocked=true;radioPlayer();renderRadio()};
- $("raVol").oninput=e=>{RA.vol=+e.target.value;LS.set("radio_vol",RA.vol);$("radioAudio").volume=RA.vol};
+ $("raMute").onclick=()=>{RA.muted=!RA.muted;LS.set("radio_muted",RA.muted);radioPrefsSave();RA.unlocked=true;radioPlayer();renderRadio()};
+ $("raVol").oninput=e=>{RA.vol=+e.target.value;LS.set("radio_vol",RA.vol);radioPrefsSave()};
  if($("raSkip"))$("raSkip").onclick=async()=>{const cur=radioNow();if(!cur)return;$("raSkip").disabled=true;
   try{const res=await api("/api/x/radio_skip",{rid:cur.rid});toast(`Skipped ${cur.title}. ${res.left} skip${res.left===1?"":"s"} left.`);RA.cur=null;$("radioAudio").pause();await tick();renderRadio()}catch(e){toast(e.message);$("raSkip").disabled=false}};
+ $("raBc").onmousedown=e=>{e.preventDefault();BC.btnDown=true;bcUpdate()};$("raBc").oncontextmenu=e=>{e.preventDefault();bcDlg()};
  $("raTags").onclick=radioTagsDlg;$("raAdd").onclick=radioAddDlg;$("raList").onclick=radioListDlg;if($("raTune"))$("raTune").onclick=()=>{RA.blocked=false;radioPlayer();renderRadio()}}
 document.addEventListener("click",()=>{if(RA.blocked){radioPlayer()}},true);
 setInterval(()=>{if(S&&S.configured){radioPlayer();renderRadio()}},1000);
@@ -1184,8 +1189,8 @@ function avOnLive(m){if(m.t==="av"){const had=AV.remote.get(m.from);AV.remote.se
  if(m.t==="bye"){AV.remote.delete(m.from);avDrop(m.from);return false}return false}
 setInterval(()=>{if(!S)return;if(Date.now()-AV.lastSent>(AV.mine.size?4000:12000))avAnnounce();avSyncPeers();renderAV()},4000);
 window.addEventListener("beforeunload",()=>avStopAll());
-function avTiles(){const out=[];for(const [sid,m] of AV.mine)out.push({key:"me"+sid,stream:m.stream,who:"You",label:m.label,kind:m.kind,mine:true,sid});
- for(const [id,r] of avFresh())for(const s of r.streams){const got=AV.streams.get(s.sid);if(got&&got.stream.getVideoTracks().some(t=>t.readyState==="live"))out.push({key:id+s.sid,stream:got.stream,who:r.u,label:s.label,kind:s.kind})
+function avTiles(){const out=[];for(const [sid,m] of AV.mine)if(m.kind!=="voice")out.push({key:"me"+sid,stream:m.stream,who:"You",label:m.label,kind:m.kind,mine:true,sid});
+ for(const [id,r] of avFresh())for(const s of r.streams){if(s.kind==="voice")continue;const got=AV.streams.get(s.sid);if(got&&got.stream.getVideoTracks().some(t=>t.readyState==="live"))out.push({key:id+s.sid,stream:got.stream,who:r.u,label:s.label,kind:s.kind})
   else out.push({key:id+s.sid,who:r.u,label:s.label,kind:s.kind,waiting:true})}return out}
 function renderAV(){const box=$("avPanel");if(!box||!S)return;const tiles=avTiles(),cams=avCams().length;
  box.style.display=tiles.length?"flex":"none";const head=$("avHead");
@@ -1392,6 +1397,69 @@ function xLogHtml(e){const u=`<b>${esc(who(e.user))}</b>`,x=X();const t=x.tasks.
  case"radio_groups":return (e.groups||[]).length?`${u}'s AI sorted the radio tags into ${e.groups.length} groups`:null}
  if(/^(task_|cal_|inv_|fb_|radio_)/.test(e.kind||""))return null;return undefined}
 document.addEventListener("click",e=>{const a=e.target.closest("#feed [data-calev]");if(!a)return;e.preventDefault();calViewDlg(a.dataset.calev)});
+
+/* ---- radio mute/volume remembered on this PC (also saved in RotLab's settings, not just the window) ---- */
+let raPrefsLoaded=false;
+function radioPrefsInit(){if(raPrefsLoaded||!S||!S.x)return;raPrefsLoaded=true;const p=S.x.prefs||{};
+ if(typeof p.radio_muted==="boolean"){RA.muted=p.radio_muted;LS.set("radio_muted",RA.muted)}if(typeof p.radio_vol==="number"){RA.vol=p.radio_vol;LS.set("radio_vol",RA.vol)}}
+let raPrefT=null;function radioPrefsSave(){clearTimeout(raPrefT);raPrefT=setTimeout(()=>api("/api/x/prefs",{set:{radio_muted:RA.muted,radio_vol:RA.vol}}).catch(()=>{}),400)}
+
+/* ---- Broadcast: hold a key, the music dips for everyone and they hear your microphone ---- */
+const BC_KEYS=[["F8","F8"],["F9","F9"],["F10","F10"],["F12","F12"],["Backquote","` (key above Tab)"],["ControlRight","Right Ctrl"],["AltRight","Right Alt"],["CapsLock","Caps Lock"],["Insert","Insert"],["Pause","Pause / Break"],["ScrollLock","Scroll Lock"],["Numpad0","Numpad 0"],["Mouse4","Mouse side button (back)"],["Mouse5","Mouse side button (forward)"]];
+const BC={sid:null,talking:false,winDown:false,glbDown:false,toggled:false,idleT:null,heard:new Map(),beat:0,duck:1};
+const bcCfg=()=>(S&&S.x&&S.x.broadcast)||{key:"F9",mode:"hold",global:false,duck:0.2};
+const bcKeyName=k=>(BC_KEYS.find(x=>x[0]===k)||[k,k])[1];
+async function bcEnsureMic(){if(BC.sid&&AV.mine.has(BC.sid))return true;
+ if(Live.status!=="on"){toast("Broadcast needs Live to be connected (bottom right).");return false}
+ if(!navigator.mediaDevices){toast("This window can't use the microphone. Try opening RotLab in Edge or Chrome.");return false}
+ let s;try{s=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false})}catch(e){toast(e.name==="NotAllowedError"?"Microphone permission was refused.":"Couldn't use the microphone: "+e.message);return false}
+ s.getAudioTracks().forEach(t=>{t.enabled=false;t.onended=()=>bcDrop()});BC.sid=s.id;AV.mine.set(s.id,{stream:s,kind:"voice",label:"Broadcast",started:Date.now()});avAnnounce();avSyncPeers();return true}
+function bcDrop(){if(BC.sid)avStop(BC.sid);BC.sid=null;bcSet(false)}
+function bcWant(){const c=bcCfg();return !!(c.mode==="toggle"?BC.toggled:(BC.winDown||BC.glbDown||BC.btnDown))}
+async function bcUpdate(){const want=bcWant();if(want===BC.talking)return;if(want&&!(await bcEnsureMic())){BC.toggled=false;BC.btnDown=false;return}bcSet(bcWant())}
+function bcSet(on){BC.talking=on;const m=BC.sid&&AV.mine.get(BC.sid);if(m)m.stream.getAudioTracks().forEach(t=>t.enabled=on);
+ if(Live.status==="on"&&S)Live.send({t:"voice",u:S.me,on});clearTimeout(BC.idleT);if(!on&&BC.sid)BC.idleT=setTimeout(bcDrop,120000);renderBcBadge()}
+setInterval(()=>{if(BC.talking&&Live.status==="on"&&S)Live.send({t:"voice",u:S.me,on:true})},1000);
+function bcOnLive(m){if(m.t!=="voice")return false;if(m.on)BC.heard.set(m.from,{u:m.u,at:Date.now()});else BC.heard.delete(m.from);renderBcBadge();return true}
+const bcOthers=()=>[...BC.heard.values()].filter(h=>Date.now()-h.at<2500);
+function bcKeyMatch(e,down){const k=bcCfg().key;if(k.startsWith("Mouse"))return false;return e.code===k}
+document.addEventListener("keydown",e=>{if(!S||!bcKeyMatch(e))return;const typing=/INPUT|TEXTAREA|SELECT/.test((document.activeElement||{}).tagName||"");
+ if(typing&&!/^F\d|Pause|ScrollLock|Insert|ControlRight|AltRight/.test(e.code))return;e.preventDefault();if(e.repeat)return;
+ if(bcCfg().mode==="toggle")BC.toggled=!BC.toggled;else BC.winDown=true;bcUpdate()},true);
+document.addEventListener("keyup",e=>{if(!S||!bcKeyMatch(e))return;if(bcCfg().mode!=="toggle"){BC.winDown=false;bcUpdate()}},true);
+document.addEventListener("mousedown",e=>{const k=bcCfg().key;if(!S||!((k==="Mouse4"&&e.button===3)||(k==="Mouse5"&&e.button===4)))return;e.preventDefault();if(bcCfg().mode==="toggle")BC.toggled=!BC.toggled;else BC.winDown=true;bcUpdate()},true);
+document.addEventListener("mouseup",e=>{const k=bcCfg().key;if(!S||!((k==="Mouse4"&&e.button===3)||(k==="Mouse5"&&e.button===4)))return;e.preventDefault();if(bcCfg().mode!=="toggle"){BC.winDown=false;bcUpdate()}},true);
+window.addEventListener("blur",()=>{if(BC.winDown){BC.winDown=false;bcUpdate()}});
+document.addEventListener("mouseup",()=>{if(BC.btnDown){BC.btnDown=false;bcUpdate()}});
+let bcPollSeq=-1;setInterval(async()=>{if(!S||!bcCfg().global)return;try{const r=await api("/api/x/ptt",{});if(r.seq===bcPollSeq)return;bcPollSeq=r.seq;
+ if(bcCfg().mode==="toggle"){if(r.down)BC.toggled=!BC.toggled}else BC.glbDown=r.down;bcUpdate()}catch(e){}},120);
+/* music dips while anyone (including you) is broadcasting */
+setInterval(()=>{const target=(BC.talking||bcOthers().length)?bcCfg().duck??0.2:1;BC.duck+=(target-BC.duck)*(target<BC.duck?0.5:0.15);if(Math.abs(target-BC.duck)<0.01)BC.duck=target;
+ const a=$("radioAudio");if(a)a.volume=Math.max(0,Math.min(1,RA.vol*BC.duck))},80);
+/* play other people's broadcasts */
+function bcRenderAudio(){const want=new Map();for(const [id,r] of avFresh())for(const s of r.streams)if(s.kind==="voice"){const got=AV.streams.get(s.sid);if(got)want.set(s.sid,got.stream)}
+ let box=$("bcAudio");if(!box){box=document.createElement("div");box.id="bcAudio";box.style.display="none";document.body.appendChild(box)}
+ [...box.children].forEach(a=>{if(!want.has(a.dataset.sid))a.remove()});
+ for(const [sid,stream] of want)if(!box.querySelector(`[data-sid="${CSS.escape(sid)}"]`)){const a=document.createElement("audio");a.dataset.sid=sid;a.autoplay=true;a.srcObject=stream;box.appendChild(a);a.play().catch(()=>{})}}
+function renderBcBadge(){let b=$("bcBadge");if(!b){b=document.createElement("div");b.id="bcBadge";b.className="out";document.body.appendChild(b)}
+ const others=bcOthers().map(h=>who(h.u));
+ if(BC.talking){b.innerHTML=`<span class="bcDot"></span> <b>You're broadcasting</b> <span class="dim">${bcCfg().mode==="toggle"?"(press "+esc(bcKeyName(bcCfg().key))+" to stop)":"(let go of "+esc(bcKeyName(bcCfg().key))+" to stop)"}</span>`;b.style.display="flex"}
+ else if(others.length){b.innerHTML=`<span class="bcDot"></span> <b>${esc(others.join(", "))}</b>&nbsp;${others.length>1?"are":"is"} broadcasting`;b.style.display="flex"}
+ else b.style.display="none"}
+setInterval(()=>{bcRenderAudio();renderBcBadge()},700);
+function bcDlg(){const c=bcCfg();
+ openDlg("Broadcast",`<div class="dim">Hold your broadcast key to talk to everyone: the radio dips while you talk and they hear your microphone. Everyone needs Live on and RotLab 5.8 or newer.</div>
+ <label class="dim" for="bcK">Key</label><select id="bcK" class="field" style="width:100%">${BC_KEYS.map(([k,l])=>`<option value="${k}" ${c.key===k?"selected":""}>${esc(l)}</option>`).join("")}</select>
+ <div><label><input type="radio" name="bcM" value="hold" ${c.mode!=="toggle"?"checked":""}> Hold to talk</label> <label style="margin-left:12px"><input type="radio" name="bcM" value="toggle" ${c.mode==="toggle"?"checked":""}> Press to start, press again to stop</label></div>
+ <label><input type="checkbox" id="bcG" ${c.global?"checked":""}> Works even when RotLab isn't the window you're using (Windows)</label>
+ <div class="dim" style="font-size:12px">With this on, RotLab watches that one key (only that key) while it's running. Pick a key you don't use for anything else, like a mouse side button or F9.</div>
+ <label class="dim" for="bcD">Music volume while someone talks: <span id="bcDv">${Math.round((c.duck??0.2)*100)}%</span></label><input id="bcD" type="range" min="0" max="0.6" step="0.05" value="${c.duck??0.2}" style="width:100%">
+ <div class="btns"><button class="btn" id="bcTest">Test microphone</button><button class="btn b" id="bcOk">Save</button><button class="btn" onclick="closeDlg()">Close</button></div>`);
+ $("bcD").oninput=()=>$("bcDv").textContent=Math.round($("bcD").value*100)+"%";
+ $("bcTest").onclick=async()=>{try{const s=await navigator.mediaDevices.getUserMedia({audio:true});const ctx=new AudioContext(),an=ctx.createAnalyser();ctx.createMediaStreamSource(s).connect(an);const d=new Uint8Array(an.fftSize);let peak=0;const t0=Date.now();
+  $("bcTest").disabled=true;const iv=setInterval(()=>{an.getByteTimeDomainData(d);for(const v of d)peak=Math.max(peak,Math.abs(v-128));$("bcTest").textContent="Say something... "+"▮".repeat(Math.min(10,Math.round(peak/8)));
+   if(Date.now()-t0>3000){clearInterval(iv);s.getTracks().forEach(t=>t.stop());ctx.close();$("bcTest").disabled=false;$("bcTest").textContent=peak>10?"✓ Microphone works":"Didn't hear anything";}},100)}catch(e){toast("Couldn't use the microphone: "+e.message)}};
+ $("bcOk").onclick=async()=>{try{await api("/api/x/bc_set",{key:$("bcK").value,mode:document.querySelector("[name=bcM]:checked").value,global:$("bcG").checked,duck:+$("bcD").value});closeDlg();await tick();toast("Broadcast: "+(document.querySelector("[name=bcM]:checked").value==="toggle"?"press ":"hold ")+bcKeyName($("bcK").value))}catch(e){toast(e.message)}}}
 
 /* ---------------- main loop ---------------- */
 function renderAll(force){if(!S||!S.configured)return;renderProjects();renderForYou();renderTabs();renderCenter(force);renderPeople();renderStatus();renderFeed(false);renderBanners();renderRadio();renderAV();

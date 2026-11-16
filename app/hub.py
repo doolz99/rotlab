@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "5.7"
+HUB_VERSION = "5.8"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -2882,6 +2882,9 @@ def check_for_update():
     return False
 
 
+ORPHAN = {"n": 0}
+
+
 def not_the_running_hub():
     """True when a different RotLab process answers on our port (this one was left behind by a restart)."""
     try:
@@ -3139,9 +3142,11 @@ def monitor():
                     print("radio:", repr(e))
             if tick % 20 == 7:
                 threading.Thread(target=ai_tick, daemon=True).start()
-            if tick % 10 == 3 and not_the_running_hub():
-                print("another RotLab answers on port %d; this one (v%s) stops" % (PORT, HUB_VERSION))
-                os._exit(0)
+            if tick % 10 == 3:
+                ORPHAN["n"] = ORPHAN["n"] + 1 if not_the_running_hub() else 0
+                if ORPHAN["n"] >= 3:
+                    print("another RotLab has answered on port %d for a while; this leftover copy (v%s) stops" % (PORT, HUB_VERSION))
+                    os._exit(0)
             if tick % 10 == 8:
                 disk_version_check()
             if tick % 6 == 0:
@@ -3367,6 +3372,39 @@ def x_state():
     with WS_LOCK:
         X_CACHE["sig"], X_CACHE["state"] = sig, state
     return state
+
+
+PTT_KEYS = {"F8": 0x77, "F9": 0x78, "F10": 0x79, "F12": 0x7B, "Backquote": 0xC0, "ControlRight": 0xA3, "AltRight": 0xA5,
+            "CapsLock": 0x14, "Insert": 0x2D, "Pause": 0x13, "ScrollLock": 0x91, "Numpad0": 0x60, "Mouse4": 0x05, "Mouse5": 0x06}
+PTT = {"down": False, "seq": 0, "ok": False}
+
+
+def bc_cfg():
+    bc = dict(CONFIG.get("broadcast") or {})
+    bc.setdefault("key", "F9")
+    bc.setdefault("mode", "hold")
+    bc.setdefault("global", False)
+    bc.setdefault("duck", 0.2)
+    return bc
+
+
+def ptt_loop():
+    if os.name != "nt":
+        return
+    import ctypes
+    gaks = ctypes.windll.user32.GetAsyncKeyState
+    PTT["ok"] = True
+    while True:
+        bc = bc_cfg()
+        if bc["global"]:
+            down = bool(gaks(PTT_KEYS.get(bc["key"], 0x78)) & 0x8000)
+            if down != PTT["down"]:
+                PTT["down"] = down
+                PTT["seq"] += 1
+            time.sleep(0.03)
+        else:
+            PTT["down"] = False
+            time.sleep(0.5)
 
 
 # ---- AI automation (an API key on this PC; only tag names are sent)
@@ -3692,7 +3730,7 @@ def x_view():
             "locs": sorted(st_["locs"].values(), key=lambda l: l["name"].lower()),
             "items": sorted(st_["items"].values(), key=lambda i: i["name"].lower()),
             "feedback": sorted(st_["feedback"].values(), key=lambda f: -f["ts"]),
-            "radio": radio_view(),
+            "radio": radio_view(), "prefs": CONFIG.get("prefs") or {}, "broadcast": bc_cfg(),
             "people": sorted({p["user"] for p in read_presence()} | ({me()} if me() else set()), key=str.lower),
             "task_status": TASK_STATUS, "fb_status": FB_STATUS}
 
@@ -3776,6 +3814,29 @@ def x_post(path, b):
         if text:
             ws_add("cal_note", cid=b["cid"], text=text)
         return 200, {"ok": True}
+    if p == "prefs":
+        prefs = dict(CONFIG.get("prefs") or {})
+        for k_, v_ in (b.get("set") or {}).items():
+            if re.match(r"^[a-z_]{1,30}$", k_) and isinstance(v_, (bool, int, float, str)) and len(str(v_)) < 200:
+                prefs[k_] = v_
+        CONFIG["prefs"] = prefs
+        save_config()
+        return 200, {"ok": True, "prefs": prefs}
+    if p == "bc_set":
+        bc = dict(CONFIG.get("broadcast") or {})
+        if b.get("key") in PTT_KEYS:
+            bc["key"] = b["key"]
+        if b.get("mode") in ("hold", "toggle"):
+            bc["mode"] = b["mode"]
+        if "global" in b:
+            bc["global"] = bool(b["global"])
+        if "duck" in b:
+            bc["duck"] = max(0.0, min(1.0, float(b["duck"])))
+        CONFIG["broadcast"] = bc
+        save_config()
+        return 200, {"ok": True}
+    if p == "ptt":
+        return 200, {"down": PTT["down"], "seq": PTT["seq"], "ok": PTT["ok"]}
     if p == "share_focus":
         mode = b.get("mode") if b.get("mode") in ("off", "app", "title") else "off"
         CONFIG["share_focus"] = mode
@@ -4469,7 +4530,7 @@ def start_phone_server():
         return
     CONFIG["phone_pin"] = ""
     try:
-        srv = ThreadingHTTPServer(("0.0.0.0", PHONE_PORT), PhoneHandler)
+        srv = HubServer(("0.0.0.0", PHONE_PORT), PhoneHandler)
         PHONE["server"], PHONE["error"] = srv, None
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         phone_pin()
@@ -4578,12 +4639,34 @@ def has_native_window():
         return False
 
 
+class HubServer(ThreadingHTTPServer):
+    """Like ThreadingHTTPServer, but a second RotLab can't take the same port. (On Windows, SO_REUSEADDR lets two
+    programs share a port, which is how a second copy used to start and then fight the first.)"""
+    allow_reuse_address = os.name != "nt"
+    daemon_threads = True
+
+    def server_bind(self):
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+    def handle_error(self, request, client_address):
+        e = sys.exc_info()[1]
+        if isinstance(e, (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
+            return  # the window closed a request early: nothing wrong
+        super().handle_error(request, client_address)
+
+
 def run_native_window():
     """Real desktop window (pywebview / Edge WebView2). Blocks until the window is closed."""
     import webview
     webview.create_window("RotLab", "http://localhost:%d" % PORT,
                           width=1320, height=900, min_size=(760, 560))
-    webview.start()
+    store = os.path.join(os.path.dirname(config_file()), "window-data")
+    try:
+        webview.start(private_mode=False, storage_path=store)  # keep localStorage (radio mute, volume, filters...)
+    except TypeError:  # older pywebview
+        webview.start()
 
 
 def show_window():
@@ -4696,11 +4779,20 @@ def main():
     print("RotLab", time.strftime("%Y-%m-%d %H:%M"))
     print("  project folder:", ROOT)
     print("  open:          http://localhost:%d" % PORT)
-    try:
-        srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-        global SERVER
-        SERVER = srv
-    except OSError:
+    srv = None
+    for attempt in range(12):
+        try:
+            srv = HubServer(("127.0.0.1", PORT), Handler)
+            break
+        except OSError:
+            try:  # is a RotLab really answering, or is the port still being let go by one that just restarted?
+                with urllib.request.urlopen("http://127.0.0.1:%d/api/ping" % PORT, timeout=2):
+                    break
+            except Exception:
+                time.sleep(1)
+    global SERVER
+    SERVER = srv
+    if srv is None:
         # already running (e.g. started with Windows) -> just open a window onto it
         print("Hub already running - opening window.")
         if not background:
@@ -4715,6 +4807,7 @@ def main():
             print("couldn't move RotLab out of the project folder:", repr(e))
     threading.Thread(target=close_tv_windows, daemon=True).start()
     threading.Thread(target=monitor, daemon=True).start()
+    threading.Thread(target=ptt_loop, daemon=True).start()
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     start_phone_server()
     try:
