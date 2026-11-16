@@ -11,7 +11,7 @@
 $ErrorActionPreference = 'Stop'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$version = 'b4c75b8474027475274ca49e5ce22d0be02d7f39'  # RotLab 5.0 fork (a fixed, tested commit)
+$version = '019088f3bb1121933684a78c404ebe32d65989e8'  # RotLab 5.1 fork (a fixed, tested commit)
 $project = if ($env:ROTLAB_DIR) { $env:ROTLAB_DIR } else { 'C:\VegasProject' }
 $app     = Join-Path $env:LOCALAPPDATA 'RotLab\app'
 $env:ROTLAB_ROOT = $project
