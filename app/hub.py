@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "5.1"
+HUB_VERSION = "5.4"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 

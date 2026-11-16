@@ -1,5 +1,5 @@
 {
- "version": "5.1",
+ "version": "5.4",
  "files": [
   "ui.html",
   "phone.html",
@@ -9,5 +9,5 @@
   "README.md",
   "hub.py"
  ],
- "notes": "RotRadio fix: the radio no longer waits for someone on an older RotLab to pick songs, and another PC takes over if the DJ's PC goes quiet."
+ "notes": "RotLab 5.4: Tasks, Calendar, Inventory, Bugs & suggestions, RotRadio, and cameras (up to 3) and screen sharing are back. RotLab now gets its updates from github.com/normanbatesbmotel-boop/rotlab."
 }

@@ -1,8 +1,8 @@
-# RotLab (fork)
+# RotLab
 
-This is a fork of [doolz99/rotlab](https://github.com/doolz99/rotlab) with extra features (version 5.0). Everyone you sync with should install this fork, so they see the same tasks, calendar, inventory, radio and video.
+RotLab now lives at **[normanbatesbmotel-boop/rotlab](https://github.com/normanbatesbmotel-boop/rotlab)**. It started as [doolz99/rotlab](https://github.com/doolz99/rotlab), which now hands updates over to it. Everyone you sync with should be on 5.4 or newer, so they see the same tasks, calendar, inventory, radio and video.
 
-## What this fork adds
+## What's new in 5.x
 
 - **Tasks** (tab): tasks with a deadline, a list of requirements people tick off, priority, an optional project, and any number of people assigned (including yourself). Comments and status (To do / Doing / Done / Cancelled). Tasks due within a week show in the strip at the top.
 - **Calendar** (tab): a month view. Task deadlines appear on it automatically; add your own events (one day or several, with a time and notes).
