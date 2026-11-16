@@ -1,5 +1,5 @@
 {
- "version": "5.2",
+ "version": "5.3",
  "files": [
   "ui.html",
   "phone.html",
@@ -9,5 +9,5 @@
   "README.md",
   "hub.py"
  ],
- "notes": "New from your friend's fork: Tasks, Calendar, Inventory, Feedback, RotRadio, cameras and screen sharing. If anything goes wrong: Help \u2192 About \u2192 go back to an older version."
+ "notes": "Back to how RotLab was before today: the Tasks, Calendar, Inventory, Feedback, RotRadio and Call features are removed again."
 }

@@ -154,15 +154,6 @@ label.ck{display:flex;gap:6px;align-items:center}
 .rcur span{position:absolute;left:12px;top:15px;background:#b48cff;color:#000;font-size:11px;padding:0 4px;border:1px solid #000;white-space:nowrap}
 #typing{font-size:12px;color:var(--dim);min-height:16px;padding:0 4px;font-style:italic}
 @media (max-width:1100px){.right{width:250px}.left{width:165px}}
-#radio{padding:5px 8px;display:flex;flex-direction:column;gap:2px;flex:none}
-#avPanel{position:fixed;left:10px;bottom:34px;z-index:45;width:min(560px,48vw);max-height:70vh;flex-direction:column;gap:4px;padding:4px;display:none}
-#avHead{display:flex;gap:6px;align-items:center;padding:2px 4px;cursor:default}
-#avGrid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px;overflow:auto}
-.avTile{position:relative;background:#000;aspect-ratio:16/9;cursor:pointer;outline:1px solid #333}
-.avTile video{width:100%;height:100%;object-fit:contain;display:block}
-.avTile.screen{grid-column:span 2}
-.avTile.big{grid-column:1/-1}
-.avLbl{position:absolute;left:0;bottom:0;right:0;background:rgba(0,0,0,.6);color:#fff;font-size:11px;padding:1px 5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 </style></head>
 <body>
 <div class="win out">
@@ -187,16 +178,11 @@ label.ck{display:flex;gap:6px;align-items:center}
    <button data-act="archive">Archive this project</button></div></div>
   <div class="mi"><button><u>V</u>iew</button><div class="drop out">
    <button data-act="v-files">Files</button><button data-act="v-board">Board</button><button data-act="v-outline">Outline</button><hr>
-   <button data-act="v-tasks">Tasks</button><button data-act="v-cal">Calendar</button><button data-act="v-inv">Inventory</button><button data-act="v-fb">Bugs &amp; suggestions</button><hr>
    <button data-act="msgonly">Only messages in the feed</button><hr>
    <button data-act="reload">Refresh</button></div></div>
-  <div class="mi"><button><u>C</u>all</button><div class="drop out">
-   <button data-act="cam">Turn a camera on...</button>
-   <button data-act="screen">Share my screen</button>
-   <button data-act="avstop">Stop my cameras &amp; screen</button></div></div>
   <div class="mi"><button><u>S</u>ync</button><div class="drop out"><button data-act="sync">Sync status &amp; linking...</button></div></div>
   <div class="mi"><button>P<u>h</u>one</button><div class="drop out"><button data-act="phone">Upload from phone...</button></div></div>
-  <div class="mi"><button><u>H</u>elp</button><div class="drop out"><button data-act="bug">Report a bug...</button><button data-act="idea">Suggest something...</button><hr><button data-act="about">About RotLab</button></div></div>
+  <div class="mi"><button><u>H</u>elp</button><div class="drop out"><button data-act="about">About RotLab</button></div></div>
  </div>
  <div id="banners"></div>
  <div class="main">
@@ -212,7 +198,6 @@ label.ck{display:flex;gap:6px;align-items:center}
   </div>
   <div class="right out">
    <div class="people in" id="people"></div>
-   <div class="in" id="radio"></div><audio id="radioAudio" preload="auto"></audio>
    <div class="feed in" id="feed"></div>
    <div id="typing" aria-live="polite"></div>
    <div style="display:flex;gap:6px"><label for="say" class="dim" style="align-self:center">Say:</label><input id="say" class="field" style="flex:1;min-width:0"><button class="btn" id="sendBtn">Send</button></div>
@@ -229,7 +214,6 @@ label.ck{display:flex;gap:6px;align-items:center}
 <div class="dropzone" id="dropzone">Drop files to add them</div>
 <div class="toast out" id="toast"></div>
 <div id="cursors"></div>
-<div class="out" id="avPanel" aria-label="Video"><div id="avHead"></div><div id="avGrid"></div></div>
 <div class="modalbg" id="modal"><div class="dlg out" id="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
  <div class="titlebar"><span id="dlgTitle">Dialog</span><button class="btn sm" id="dlgX" aria-label="Close" style="min-height:18px;padding:0 6px">×</button></div>
  <div class="body" id="dlgBody"></div>
@@ -286,8 +270,6 @@ async function act(a){try{
  else if(a.startsWith("v-"))setArea(a.slice(2));
  else if(a==="msgonly"){msgOnly=!msgOnly;LS.set("msgonly",msgOnly);$("feed")._last="";renderFeed(true);toast(msgOnly?"Feed shows only messages":"Feed shows messages and changes")}
  else if(a==="reload")location.reload();
- else if(a==="cam")camDlg();else if(a==="screen")avStart("screen");else if(a==="avstop")avStopAll();
- else if(a==="bug")fbNewDlg("bug");else if(a==="idea")fbNewDlg("suggestion");
  else if(a==="sync")syncDlg();else if(a==="phone")phoneDlg();else if(a==="about")aboutDlg();
 }catch(e){toast(e.message)}}
 
@@ -319,10 +301,8 @@ function settingsDlg(first){const st=S?S.settings:{};
   try{await api("/api/setup",b);if(sm&&S&&S.settings&&sm.value!==S.settings.storage)await api("/api/storage/set",{mode:sm.value});closeDlg();tick()}catch(e){toast(e.message)}};
  if($("sCancel"))$("sCancel").onclick=closeDlg;$("sName").onkeydown=e=>{if(e.key==="Enter")$("sOk").click()};
 }
-function aboutDlg(){openDlg("About RotLab",`<div style="display:flex;gap:14px;align-items:center"><svg width="40" height="40" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="5" width="14" height="10" fill="#c0c0c0" stroke="#000"/><rect x="1" y="2" width="14" height="3" fill="#fff" stroke="#000"/><path d="M6 8 L11 10 L6 12 Z" fill="#000"/></svg><div><b>RotLab</b><br>Version ${esc(S.version)}${S.github&&S.github.latest?" · newest on GitHub: "+esc(S.github.latest):""}<br><span class="dim">Projects, files, requests and sync for making things together.<br>New versions are downloaded from GitHub but only installed when you click Install. Older versions are kept on this PC.</span></div></div>${(S.backups||[]).length?`<fieldset style="margin-top:10px"><legend>Go back to an older version</legend><div class="dim" style="margin-bottom:6px">Kept on this PC. Only this PC goes back; your files, chat and tasks stay.</div>${S.backups.map(b=>`<button class="btn" data-rb="${esc(b.version)}" style="margin:0 4px 4px 0">v${esc(b.version)}</button>`).join("")}</fieldset>`:""}<div class="btns"><button class="btn" id="aChk">Check for updates</button><button class="btn" onclick="closeDlg()">OK</button></div>`);
+function aboutDlg(){openDlg("About RotLab",`<div style="display:flex;gap:14px;align-items:center"><svg width="40" height="40" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="5" width="14" height="10" fill="#c0c0c0" stroke="#000"/><rect x="1" y="2" width="14" height="3" fill="#fff" stroke="#000"/><path d="M6 8 L11 10 L6 12 Z" fill="#000"/></svg><div><b>RotLab</b><br>Version ${esc(S.version)}${S.github&&S.github.latest?" · newest on GitHub: "+esc(S.github.latest):""}<br><span class="dim">Projects, files, requests and sync for making things together.<br>New versions are downloaded from GitHub but only installed when you click Install. Older versions are kept on this PC.</span></div></div><div class="btns"><button class="btn" id="aChk">Check for updates</button><button class="btn" onclick="closeDlg()">OK</button></div>`);
  $("aChk").onclick=async()=>{await api("/api/check_updates");toast("Checking GitHub for a new version...");setTimeout(async()=>{await tick();aboutDlg()},5000)}}
- document.querySelectorAll("[data-rb]").forEach(b=>b.onclick=async()=>{if(!confirm("Go back to RotLab "+b.dataset.rb+" on this PC? RotLab restarts. You can install the newer version again later."))return;
-  try{await api("/api/rollback",{version:b.dataset.rb,window:true});document.body.innerHTML='<p style="padding:40px;color:#a8a8a8">Going back to v'+esc(b.dataset.rb)+'... RotLab reopens in a few seconds.</p>';setTimeout(()=>window.close(),1500)}catch(e){toast(e.message)}})
 function phoneDlg(){const p=S.phone;let h="";
  const mins=p.enabled?Math.max(1,Math.round((p.until-Date.now()/1000)/60)):0;
  if(!p.enabled)h='<div>Uploading from a phone is off. Turn it on while you upload; it switches itself off after 30 minutes and gets a new PIN each time.</div>';else if(p.error)h=`<div style="color:#ffb4b4">${esc(p.error)}</div>`;
@@ -378,7 +358,7 @@ function renderProjects(){const list=W.projects.filter(p=>!p.archived);
    if(f)useIn(f,b.dataset.pid);else{const fs=[...(e.dataTransfer.files||[])];if(fs.length)uploadDlg(fs,b.dataset.pid)}}})}
 function selectProject(p){markSeen();pid=p;partSel=null;selPath=null;lib=null;markSeen();api("/api/ws/select",{pid}).catch(()=>{});if(area==="outline"&&!hasOutline())area="files";renderAll(true)}
 function setArea(a){if(a==="outline"&&!hasOutline()){newPart();return}area=a;LS.set("area",a);if(a!=="outline")partSel=a==="board"?partSel:null;
- api("/api/view",{view:({files:"Files",board:"the Board",outline:"the Outline",online:"Find online"})[a]?({files:"Files",board:"the Board",outline:"the Outline",online:"Find online"})[a]+" of "+pname(pid):X_AREAS[a]}).catch(()=>{});renderAll(true)}
+ api("/api/view",{view:({files:"Files",board:"the Board",outline:"the Outline",online:"Find online"})[a]+" of "+pname(pid)}).catch(()=>{});renderAll(true)}
 
 /* ---------------- links ---------------- */
 async function useIn(file,target){if(target===S.shared)return toast("Shared is already visible to every project.");if(projOfPath(file)===target)return toast("That file is already in "+pname(target)+".");
@@ -415,9 +395,6 @@ function forYou(){const it=[];
  for(const [f,cs] of Object.entries(byFile))it.push({k:"comments",t:`${cs.length} new comment${cs.length>1?"s":""} on ${short(f)}`,go:()=>gotoFile(f),pid:projOfPath(f),ts:Math.max(...cs.map(c=>c.ts))});
  for(const l of W.links){if(l.waiting)it.push({k:"waiting",t:`New ${short(l.newest)} from ${pname(l.src)} goes into ${pname(l.pid)} when it's closed`,go:()=>{selectProject(l.pid);linksDlg()},pid:l.pid,ts:0});
   else if(l.pinned&&l.update)it.push({k:"new version",t:`${pname(l.src)} has a newer ${short(l.newest)} (you kept an older one)`,go:()=>{selectProject(l.pid);linkVersionsDlg(l.lid)},pid:l.pid,ts:0})}
- for(const t of X().tasks){if(!t.assignees.includes(S.me)||["done","cancelled"].includes(t.status))continue;const n=t.due?daysTo(t.due):null;
-  if(n!==null&&n<=7)it.push({k:n<0?"late":n===0?"due today":"due "+fmtDate(t.due).toLowerCase(),t:t.title,go:()=>taskDlg(t.tid),pid:t.pid||null,ts:9e9-n});
-  else if(t.by!==S.me&&Date.now()/1000-t.ts<3*86400&&t.status==="todo")it.push({k:"new task",t:t.title+" (from "+t.by+")",go:()=>taskDlg(t.tid),pid:t.pid||null,ts:t.ts})}
  const ack=LS.get("expack",{});
  const cack=LS.get("colack",{});for(const e of S.log)if(e.type==="collected"&&e.user===S.me&&!cack[e.id]&&Date.now()/1000-e.ts<3*86400)it.push({k:"copied in",t:`${short(e.file)} used ${e.count} outside file${e.count>1?"s":""}: copied to ${e.folder}. Next time VEGAS/FL asks where it is, point it there.`,go:()=>{cack[e.id]=1;LS.set("colack",cack);gotoFile(e.file)},pid:projOfPath(e.file),ts:e.ts});
  for(const x of (W.auto_exports||[]))if(x.value&&x.user===S.me&&!ack[x.file])it.push({k:"render",t:`${short(x.file)} counted as a new export of ${pname(projOfPath(x.file))}`,go:()=>{ack[x.file]=1;LS.set("expack",ack);gotoFile(x.file)},pid:projOfPath(x.file),ts:x.ts});
@@ -430,7 +407,7 @@ function renderForYou(){const it=forYou();let h;
 
 /* ---------------- centre ---------------- */
 function renderTabs(){const open=W.requests.filter(r=>r.pid===pid&&!["done","cancelled"].includes(r.status)).length;
- const t=[["files","Files"],["board","Board"+(open?" ("+open+")":"")]];if(hasOutline())t.push(["outline","Outline"]);t.push(["online","Find online"]);const xo=X().tasks.filter(x=>x.assignees.includes(S.me)&&!["done","cancelled"].includes(x.status)).length;t.push(["tasks","Tasks"+(xo?" ("+xo+")":"")],["cal","Calendar"],["inv","Inventory"],["fb","Feedback"]);
+ const t=[["files","Files"],["board","Board"+(open?" ("+open+")":"")]];if(hasOutline())t.push(["outline","Outline"]);t.push(["online","Find online"]);
  const h=t.map(([k,l])=>`<button class="tab ${area===k?"on":""}" data-tab="${k}">${esc(l)}</button>`).join("")+`<span style="flex:1"></span><span class="dim" style="font-size:12px;padding:0 6px 4px">${esc(isShared()?"Shared: files every project can use":proj()?proj().type_label+" project"+(proj().exists?"":" · folder still syncing"):"")}</span>`;
  if($("tabs")._h===h)return;$("tabs").innerHTML=h;$("tabs")._h=h;$("tabs").querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>setArea(b.dataset.tab))}
 let viewKey="";
@@ -438,7 +415,6 @@ function renderCenter(force){if(area==="outline"&&!hasOutline())area="files";
  const key=area+"|"+pid+"|"+partSel;
  if(area==="files"){if(force||viewKey!==key){viewKey=key;filesShell()}loadLib(force);return}
  if(area==="online"){if(force||viewKey!==key){viewKey=key;onlineShell()}return}
- if(X_AREAS[area]){if(viewKey!==key)force=true;viewKey=key;renderX(force);return}
  viewKey=key;
  const h=area==="board"?boardHtml():(partSel?partHtml():outlineHtml());
  const v=$("view");if(v._h===h&&!force)return;
@@ -712,7 +688,7 @@ function logHtml(e){const u=`<b>${esc(who(e.user))}</b>`,files=e.files||[],n=e.c
   case"restore":return `${u} restored ${esc(short(e.file))} to an earlier save`;
   case"joined":return `${u} started using RotLab`;case"sync_accept":return `${u} linked with ${esc(e.device)}`;case"updated":return `${u}'s RotLab updated to v${esc(e.version)}`}
  return null}
-function wsLogHtml(e){{const xh=xLogHtml(e);if(xh!==undefined)return xh}const u=`<b>${esc(who(e.user))}</b>`,r=W.requests.find(x=>x.rid===e.rid),rl=r?`<a data-ticket="${r.rid}">#${r.num} ${esc(r.title)}</a>`:"a request",pt=W.parts.find(x=>x.part===e.part);
+function wsLogHtml(e){const u=`<b>${esc(who(e.user))}</b>`,r=W.requests.find(x=>x.rid===e.rid),rl=r?`<a data-ticket="${r.rid}">#${r.num} ${esc(r.title)}</a>`:"a request",pt=W.parts.find(x=>x.part===e.part);
  switch(e.kind){case"proj_new":return `${u} made a new project, <b>${esc(e.name)}</b>`;case"proj_set":return e.archived?`${u} archived ${esc(pname(e.pid))}`:e.name?`${u} renamed a project to <b>${esc(e.name)}</b>`:null;
   case"part_new":return `${u} added <b>${esc(e.name)}</b> to the outline`;
   case"part_set":if(e.stage!=null&&pt){const p=W.projects.find(x=>x.pid===pt.pid);return `${u} moved <b>${esc(pt.name)}</b> to ${esc(p?p.stages[e.stage]:e.stage)}`}return null;
@@ -918,7 +894,7 @@ let liveChats=[],typingUntil={},remoteCur={};
 const Live=makeLive({id:ME_ID,brokers:[],
  onstatus:()=>{if(S)renderStatus()},
  onconnect:()=>Live.send({t:"hi",u:S&&S.me}),
- onmessage:m=>{if(!S||m.u===S.me)return;if(avOnLive(m))return;
+ onmessage:m=>{if(!S||m.u===S.me)return;
   if(m.t==="chat"){liveChats.push({ts:m.ts,user:m.u,text:m.text});typingUntil[m.u]=0;renderFeed(false);renderTyping();
    if(!focused&&window.Notification&&Notification.permission==="granted")new Notification("RotLab",{body:m.u+": "+m.text});lastSeenTs=Math.max(lastSeenTs||0,m.ts)}
   else if(m.t==="typing"){typingUntil[m.u]=Date.now()+4000;renderTyping()}
@@ -939,329 +915,8 @@ function drawCursors(){const box=$("cursors"),r=document.querySelector(".center"
  if(box._h!==h){box.innerHTML=h;box._h=h}}
 setInterval(drawCursors,1500);
 
-/* ================= EXTRAS (fork 5.0): tasks, calendar, inventory, feedback, RotRadio, cameras & screen share ================= */
-const X_AREAS={tasks:"Tasks",cal:"Calendar",inv:"Inventory",fb:"Feedback"};
-const X=()=>(S&&S.x)||{tasks:[],cal:[],locs:[],items:[],feedback:[],radio:{queue:[],tracks:[],tags:{},disabled:[]},people:[]};
-const todayStr=()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
-const fmtDate=s=>{if(!s)return"";const d=new Date(s+"T00:00:00");return d.toLocaleDateString([],{weekday:"short",day:"numeric",month:"short"})};
-const daysTo=s=>Math.round((new Date(s+"T00:00:00")-new Date(todayStr()+"T00:00:00"))/864e5);
-const PRIO={low:"Low",normal:"Normal",high:"High",urgent:"Urgent"};
-const TST={todo:"To do",doing:"Doing",done:"Done",cancelled:"Cancelled"};
-const FST={open:"Open",planned:"Planned",done:"Done",wontfix:"Won't do"};
-let xf={tasks:LS.get("xf_tasks","mine"),tshow:LS.get("xf_tshow","open"),cal:null,inv:"all",invq:"",fb:"all",fbshow:"open"};
-function viewBusy(){const a=document.activeElement;return a&&$("view").contains(a)&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)}
-function renderX(force){const h=({tasks:tasksHtml,cal:calHtml,inv:invHtml,fb:fbHtml})[area]();const v=$("view");
- if(!force&&(v._h===h||viewBusy()))return;v.innerHTML=h;v._h=h;bindX()}
-function bindX(){const v=$("view");
- v.querySelectorAll("[data-xf]").forEach(b=>b.onclick=()=>{const [k,val]=b.dataset.xf.split(":");xf[k]=val;LS.set("xf_"+k,val);renderX(true)});
- v.querySelectorAll("[data-task]").forEach(b=>b.onclick=e=>{e.preventDefault();taskDlg(b.dataset.task)});
- v.querySelectorAll("[data-tstat]").forEach(s=>s.onchange=async()=>{try{await api("/api/x/task_set",{tid:s.dataset.tstat,status:s.value});await tick()}catch(e){toast(e.message)}});
- v.querySelectorAll("[data-cev]").forEach(b=>b.onclick=e=>{e.stopPropagation();calEventDlg(b.dataset.cev)});
- v.querySelectorAll("[data-cday]").forEach(c=>c.onclick=e=>{if(e.target.closest("[data-task],[data-cev]"))return;calEventDlg(null,c.dataset.cday)});
- v.querySelectorAll("[data-cnav]").forEach(b=>b.onclick=()=>{const n=+b.dataset.cnav;if(n===0)xf.cal=null;else{const [y,m]=calMonth();const d=new Date(y,m+n,1);xf.cal=[d.getFullYear(),d.getMonth()]}renderX(true)});
- v.querySelectorAll("[data-loc]").forEach(b=>b.onclick=()=>{xf.inv=b.dataset.loc;renderX(true)});
- v.querySelectorAll("[data-locedit]").forEach(b=>b.onclick=e=>{e.stopPropagation();locDlg(b.dataset.locedit)});
- v.querySelectorAll("[data-item]").forEach(b=>b.onclick=()=>itemDlg(b.dataset.item));
- v.querySelectorAll("[data-imove]").forEach(s=>s.onchange=async()=>{try{await api("/api/x/item_set",{iid:s.dataset.imove,loc:s.value});await tick()}catch(e){toast(e.message)}});
- v.querySelectorAll("[data-fb]").forEach(b=>b.onclick=()=>fbDlg(b.dataset.fb));
- v.querySelectorAll("[data-vote]").forEach(b=>b.onclick=async e=>{e.stopPropagation();const f=X().feedback.find(x=>x.fid===b.dataset.vote);try{await api("/api/x/fb_act",{fid:f.fid,act:"vote",value:!f.votes.includes(S.me)});await tick()}catch(er){toast(er.message)}});
- const iq=$("invQ");if(iq)iq.oninput=()=>{xf.invq=iq.value;const p=iq.selectionStart;renderX(true);const n=$("invQ");n.focus();n.setSelectionRange(p,p)};
- v.querySelectorAll("[data-xact]").forEach(b=>b.onclick=()=>xAct(b.dataset.xact))}
-function xAct(a){if(a==="newtask")taskEditDlg(null);else if(a==="newevent")calEventDlg(null,todayStr());else if(a==="newloc")locDlg(null);
- else if(a==="newitem")itemDlg(null);else if(a==="bug")fbNewDlg("bug");else if(a==="idea")fbNewDlg("suggestion")}
-function chipsF(k,opts){return `<span class="chips">${opts.map(([v,l])=>`<button class="chip ${xf[k]===v?"on":""}" data-xf="${k}:${v}">${esc(l)}</button>`).join("")}</span>`}
-function peopleOpts(sel){const ppl=[...new Set([...(X().people||[]),...sel,S.me])].filter(Boolean).sort((a,b)=>a.localeCompare(b));
- return ppl.map(p=>`<label style="display:inline-flex;gap:4px;align-items:center;margin-right:10px"><input type="checkbox" class="tAs" value="${esc(p)}" ${sel.includes(p)?"checked":""}>${esc(who(p))}</label>`).join("")}
-
-/* ---- tasks ---- */
-function dueHtml(t){if(!t.due)return'<span class="dim">no deadline</span>';const n=daysTo(t.due),late=n<0&&!["done","cancelled"].includes(t.status);
- return `<span style="${late?"color:#ff8a8a;font-weight:bold":n<=2&&t.status!=="done"?"color:#ffcf6a":""}">${esc(fmtDate(t.due))}${t.due_time?" "+esc(t.due_time):""}${late?" (late)":n===0?" (today)":n===1?" (tomorrow)":""}</span>`}
-function tasksHtml(){const all=X().tasks;let ts=all.filter(t=>xf.tasks==="all"||(xf.tasks==="mine"?t.assignees.includes(S.me):t.by===S.me));
- ts=ts.filter(t=>xf.tshow==="all"||(xf.tshow==="open"?!["done","cancelled"].includes(t.status):t.status==="done"));
- let h=`<div class="head"><h2>Tasks</h2>${chipsF("tasks",[["mine","Assigned to me"],["made","Made by me"],["all","Everyone's"]])}${chipsF("tshow",[["open","Open"],["done","Done"],["all","All"]])}<span style="flex:1"></span><button class="btn b" data-xact="newtask">+ New task</button></div>`;
- if(!ts.length)return h+`<div class="empty">${all.length?"No tasks match.":"No tasks yet. Make one with + New task: give it a deadline, a list of what it needs, and the people doing it."}</div>`;
- h+=`<div class="in" style="flex:1;overflow:auto"><table><thead><tr><th>Task</th><th>Who</th><th>Deadline</th><th>Needs</th><th>Priority</th><th>Status</th></tr></thead><tbody>`;
- for(const t of ts){const done=t.reqs.filter(r=>r.done).length;
-  h+=`<tr><td><a data-task="${esc(t.tid)}"><b>${esc(t.title)}</b></a>${t.pid&&W.projects.some(p=>p.pid===t.pid)?` <span class="tag">${esc(pname(t.pid))}</span>`:""}${t.thread.filter(x=>x.kind==="comment").length?` <span class="dim">💬${t.thread.filter(x=>x.kind==="comment").length}</span>`:""}</td>
-  <td>${t.assignees.length?t.assignees.map(a=>esc(who(a))).join(", "):'<span class="dim">nobody</span>'}</td><td>${dueHtml(t)}</td>
-  <td>${t.reqs.length?`${done}/${t.reqs.length}`:'<span class="dim">-</span>'}</td><td>${t.prio==="normal"?'<span class="dim">Normal</span>':`<span class="tag" style="${t.prio==="urgent"?"border-color:#c55;color:#ff9a9a":t.prio==="high"?"border-color:#b8902c;color:#ffd77a":""}">${esc(PRIO[t.prio]||t.prio)}</span>`}</td>
-  <td><select class="field" data-tstat="${esc(t.tid)}" aria-label="Status">${Object.entries(TST).map(([k,l])=>`<option value="${k}" ${t.status===k?"selected":""}>${l}</option>`).join("")}</select></td></tr>`}
- return h+"</tbody></table></div>"}
-function taskEditDlg(tid,preset){const t=tid?X().tasks.find(x=>x.tid===tid):Object.assign({title:"",desc:"",reqs:[],due:"",due_time:"",prio:"normal",assignees:[S.me],pid:""},preset||{});if(!t)return;
- openDlg(tid?"Edit task":"New task",`<label class="dim" for="tT">Title</label><input id="tT" class="field" style="width:100%" maxlength="120" value="${esc(t.title)}">
- <label class="dim" for="tD">Details</label><textarea id="tD" class="field" rows="3" style="width:100%">${esc(t.desc)}</textarea>
- <label class="dim" for="tR">Requirements (one per line; people tick them off)</label><textarea id="tR" class="field" rows="4" style="width:100%">${esc(t.reqs.map(r=>r.text).join("\n"))}</textarea>
- <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end"><div><label class="dim" for="tDue">Deadline</label><br><input id="tDue" type="date" class="field" value="${esc(t.due)}"></div>
- <div><label class="dim" for="tTime">Time</label><br><input id="tTime" type="time" class="field" value="${esc(t.due_time)}"></div>
- <div><label class="dim" for="tP">Priority</label><br><select id="tP" class="field">${Object.entries(PRIO).map(([k,l])=>`<option value="${k}" ${t.prio===k?"selected":""}>${l}</option>`).join("")}</select></div>
- <div><label class="dim" for="tPj">Project</label><br><select id="tPj" class="field"><option value="">None</option>${W.projects.filter(p=>!p.archived).map(p=>`<option value="${esc(p.pid)}" ${t.pid===p.pid?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div></div>
- <div class="dim">Assigned to</div><div id="tAsBox">${peopleOpts(t.assignees)}</div><div style="display:flex;gap:6px"><input id="tAsNew" class="field" placeholder="Someone else (type a name)" style="flex:1"><button class="btn sm" id="tAsAdd">Add</button></div>
- <div class="btns"><button class="btn b" id="tOk">${tid?"Save":"Create task"}</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`,{wide:true});
- $("tAsAdd").onclick=()=>{const n=$("tAsNew").value.trim();if(!n)return;const cur=[...document.querySelectorAll(".tAs:checked")].map(x=>x.value);$("tAsBox").innerHTML=peopleOpts([...cur,n]);$("tAsNew").value=""};
- $("tOk").onclick=async()=>{const b={title:$("tT").value.trim(),desc:$("tD").value,reqs:$("tR").value.split("\n").map(s=>s.trim()).filter(Boolean),due:$("tDue").value,due_time:$("tTime").value,prio:$("tP").value,pid:$("tPj").value,assignees:[...document.querySelectorAll(".tAs:checked")].map(x=>x.value)};
-  if(!b.title)return toast("Give the task a title");try{const r=await api(tid?"/api/x/task_set":"/api/x/task_new",tid?Object.assign(b,{tid}):b);await tick();taskDlg(tid||r.tid)}catch(e){toast(e.message)}}}
-function taskDlg(tid){const t=X().tasks.find(x=>x.tid===tid);if(!t){closeDlg();return toast("That task is gone")}
- openDlg("Task: "+t.title,`<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><b style="font-size:15px">${esc(t.title)}</b><span class="tag">${esc(TST[t.status])}</span>${t.prio!=="normal"?`<span class="tag">${esc(PRIO[t.prio])}</span>`:""}${t.pid&&W.projects.some(p=>p.pid===t.pid)?`<span class="tag">${esc(pname(t.pid))}</span>`:""}</div>
- <div>Deadline: ${dueHtml(t)} · Assigned to: ${t.assignees.length?t.assignees.map(a=>"<b>"+esc(who(a))+"</b>").join(", "):"nobody"} · <span class="dim">made by ${esc(who(t.by))}, ${esc(dayName(t.ts).toLowerCase())}</span></div>
- ${t.desc?`<div class="in" style="padding:6px 8px;white-space:pre-wrap">${esc(t.desc)}</div>`:""}
- ${t.reqs.length?`<div class="dim">Requirements</div><div class="in" style="padding:4px 8px">${t.reqs.map((r,i)=>`<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-treq="${i}" ${r.done?"checked":""}><span style="${r.done?"text-decoration:line-through;color:var(--dim)":""}">${esc(r.text)}</span>${r.done&&r.by?`<span class="dim" style="font-size:11px">${esc(who(r.by))}</span>`:""}</label>`).join("")}</div>`:""}
- <div style="display:flex;gap:6px;flex-wrap:wrap">${Object.entries(TST).map(([k,l])=>`<button class="btn sm ${t.status===k?"b":""}" data-tset="${k}">${l}</button>`).join("")}</div>
- <div class="dim">Comments</div><div class="in" style="max-height:200px;overflow:auto;padding:4px 8px">${t.thread.length?t.thread.map(x=>`<div><span class="dim" style="font-size:11px">${esc(dayName(x.ts))} ${esc(tm(x.ts))}</span> <b>${esc(who(x.user))}</b>${x.kind==="status"?` <span class="dim">set it to ${esc(TST[x.text]||x.text)}</span>`:": "+linkify(x.text)}</div>`).join(""):'<span class="dim">Nothing yet.</span>'}</div>
- <div style="display:flex;gap:6px"><input id="tC" class="field" style="flex:1" placeholder="Write a comment"><button class="btn" id="tCs">Send</button></div>
- <div class="btns"><button class="btn" id="tDel">Delete</button><button class="btn" id="tEd">Edit...</button><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true,nofocus:true});
- const re=async(u,b)=>{try{await api(u,b);await tick();taskDlg(tid)}catch(e){toast(e.message)}};
- document.querySelectorAll("[data-treq]").forEach(c=>c.onchange=()=>re("/api/x/task_req",{tid,i:+c.dataset.treq,done:c.checked}));
- document.querySelectorAll("[data-tset]").forEach(b=>b.onclick=()=>re("/api/x/task_set",{tid,status:b.dataset.tset}));
- const send=()=>{const v=$("tC").value.trim();if(v)re("/api/x/task_comment",{tid,text:v})};$("tCs").onclick=send;$("tC").onkeydown=e=>{if(e.key==="Enter")send()};
- $("tEd").onclick=()=>taskEditDlg(tid);$("tDel").onclick=async()=>{if(confirm("Delete the task “"+t.title+"” for everyone?")){await api("/api/x/task_del",{tid});closeDlg();tick()}}}
-
-/* ---- calendar ---- */
-function calMonth(){if(xf.cal)return xf.cal;const d=new Date();return [d.getFullYear(),d.getMonth()]}
-function calItems(){const out=[];
- for(const t of X().tasks)if(t.due&&t.status!=="cancelled")out.push({date:t.due,end:t.due,time:t.due_time,title:t.title,task:t.tid,done:t.status==="done",kind:"deadline"});
- for(const c of X().cal)out.push({date:c.date,end:c.end||c.date,time:c.time,title:c.title,cev:c.cid,kind:"event"});
- return out.sort((a,b)=>(a.time||"99").localeCompare(b.time||"99"))}
-function calChip(i){const st=i.kind==="deadline"?`background:${i.done?"#2a3a2a":"#4a2a2a"};border-left:3px solid ${i.done?"#5fbf6a":"#ff7a7a"}`:"background:#22314f;border-left:3px solid #7aa2ff";
- return `<a ${i.task?`data-task="${esc(i.task)}"`:`data-cev="${esc(i.cev)}"`} style="display:block;${st};color:#eee;text-decoration:none;font-size:11.5px;padding:0 4px;margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;${i.done?"text-decoration:line-through;opacity:.7":""}" title="${esc((i.kind==="deadline"?"Deadline: ":"")+i.title+(i.time?" "+i.time:""))}">${i.kind==="deadline"?"⏰ ":""}${i.time?esc(i.time)+" ":""}${esc(i.title)}</a>`}
-function calHtml(){const [y,m]=calMonth(),first=new Date(y,m,1),start=new Date(y,m,1-((first.getDay()+6)%7)),items=calItems(),td=todayStr();
- const ds=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
- let h=`<div class="head"><h2>Calendar</h2><button class="btn sm" data-cnav="-1" aria-label="Previous month">◀</button><b style="min-width:130px;text-align:center">${esc(first.toLocaleDateString([],{month:"long",year:"numeric"}))}</b><button class="btn sm" data-cnav="1" aria-label="Next month">▶</button><button class="btn sm" data-cnav="0">Today</button>
- <span class="dim" style="font-size:12px"><span style="color:#ff9a9a">⏰ deadlines</span> come from Tasks · <span style="color:#9db8ff">events</span> are added here</span><span style="flex:1"></span><button class="btn b" data-xact="newevent">+ Event</button></div>
- <div class="in" style="flex:1;overflow:auto;padding:3px"><div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px">${["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>`<div class="dim" style="text-align:center;font-size:12px">${d}</div>`).join("")}`;
- for(let i=0;i<42;i++){const d=new Date(start.getFullYear(),start.getMonth(),start.getDate()+i),s=ds(d),inM=d.getMonth()===m;
-  if(i===35&&!inM)break;const its=items.filter(x=>x.date<=s&&s<=x.end);
-  h+=`<div data-cday="${s}" style="min-height:84px;padding:2px 3px;cursor:pointer;background:${s===td?"#1d2740":inM?"#181818":"#101010"};outline:${s===td?"1px solid #4a6fc0":"1px solid #262626"}" title="Click to add an event on ${esc(fmtDate(s))}"><div style="font-size:12px;${inM?"":"color:#555"};${s===td?"font-weight:bold;color:#9db8ff":""}">${d.getDate()}</div>${its.slice(0,4).map(calChip).join("")}${its.length>4?`<div class="dim" style="font-size:11px">+${its.length-4} more</div>`:""}</div>`}
- h+=`</div></div>`;const up=items.filter(x=>x.end>=td&&daysTo(x.date)<=14).sort((a,b)=>(a.date+(a.time||"")).localeCompare(b.date+(b.time||"")));
- h+=`<div class="in" style="max-height:130px;overflow:auto;padding:4px 8px"><b>Next 2 weeks</b>${up.length?up.map(i=>`<div>${esc(fmtDate(i.date<td?td:i.date))}${i.time?" "+esc(i.time):""} · ${i.task?`<a data-task="${esc(i.task)}">⏰ ${esc(i.title)}</a>`:`<a data-cev="${esc(i.cev)}">${esc(i.title)}</a>`}</div>`).join(""):'<div class="dim">Nothing coming up.</div>'}</div>`;
- return h}
-function calEventDlg(cid,date){const c=cid?X().cal.find(x=>x.cid===cid):{title:"",date:date||todayStr(),end:"",time:"",notes:""};if(!c)return;
- openDlg(cid?"Event":"New event",`<label class="dim" for="cT">What</label><input id="cT" class="field" style="width:100%" maxlength="120" value="${esc(c.title)}">
- <div style="display:flex;gap:10px;flex-wrap:wrap"><div><label class="dim" for="cD">Date</label><br><input id="cD" type="date" class="field" value="${esc(c.date)}"></div><div><label class="dim" for="cE">Until (optional)</label><br><input id="cE" type="date" class="field" value="${esc(c.end)}"></div><div><label class="dim" for="cTm">Time (optional)</label><br><input id="cTm" type="time" class="field" value="${esc(c.time)}"></div></div>
- <label class="dim" for="cN">Notes</label><textarea id="cN" class="field" rows="3" style="width:100%">${esc(c.notes)}</textarea>${cid?`<div class="dim">Added by ${esc(who(c.by))}</div>`:""}
- <div class="btns">${cid?'<button class="btn" id="cDel">Delete</button>':""}<button class="btn b" id="cOk">${cid?"Save":"Add event"}</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
- $("cOk").onclick=async()=>{const b={title:$("cT").value.trim(),date:$("cD").value,end:$("cE").value,time:$("cTm").value,notes:$("cN").value};if(!b.title||!b.date)return toast("Give it a title and a date");
-  try{await api(cid?"/api/x/cal_set":"/api/x/cal_new",cid?Object.assign(b,{cid}):b);closeDlg();tick()}catch(e){toast(e.message)}};
- if(cid)$("cDel").onclick=async()=>{if(confirm("Delete this event for everyone?")){await api("/api/x/cal_set",{cid,deleted:true});closeDlg();tick()}}}
-
-/* ---- inventory ---- */
-function invHtml(){const x=X(),locs=x.locs,cnt=l=>x.items.filter(i=>i.loc===l).reduce((a,i)=>a+(+i.qty||0),0);
- const lname=id=>(locs.find(l=>l.lid===id)||{}).name;
- let its=x.items.filter(i=>xf.inv==="all"||(xf.inv==="none"?!lname(i.loc):i.loc===xf.inv));const q=xf.invq.trim().toLowerCase();
- if(q)its=its.filter(i=>[i.name,i.owner,i.cat,i.notes,lname(i.loc)||""].join(" ").toLowerCase().includes(q));
- let h=`<div class="head"><h2>Inventory</h2><span class="dim">everything you own and where it is</span><span style="flex:1"></span><label for="invQ" class="dim">Find:</label><input id="invQ" class="field" style="width:170px" value="${esc(xf.invq)}" placeholder="name, owner, note"><button class="btn sm" data-xact="newloc">+ Place</button><button class="btn b" data-xact="newitem">+ Item</button></div>
- <div style="display:flex;gap:6px;flex:1;min-height:0"><div class="in" style="width:190px;flex:none;overflow:auto;padding:3px">`;
- const lb=(id,name,n,edit)=>`<div class="proj ${xf.inv===id?"sel":""}" data-loc="${esc(id)}" style="display:flex;gap:4px;align-items:center;padding:3px 6px;cursor:pointer;${xf.inv===id?"background:var(--sel);color:#fff":""}"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span><span class="dim" style="${xf.inv===id?"color:#cfd8ff":""}">${n}</span>${edit?`<button class="btn sm" data-locedit="${esc(id)}" title="Rename or delete" aria-label="Edit ${esc(name)}" style="min-height:17px;padding:0 4px">✎</button>`:""}</div>`;
- h+=lb("all","All places",x.items.reduce((a,i)=>a+(+i.qty||0),0),false)+locs.map(l=>lb(l.lid,l.name,cnt(l.lid),true)).join("");
- const nopl=x.items.filter(i=>!lname(i.loc));if(nopl.length)h+=lb("none","No place set",nopl.length,false);
- if(!locs.length)h+=`<div class="dim" style="padding:6px;font-size:12px">Add places (a room, a shelf, a bag, someone's house) with + Place.</div>`;
- h+=`</div><div class="in" style="flex:1;overflow:auto">`;
- if(!its.length)h+=`<div class="empty">${x.items.length?"Nothing here.":"No items yet. Add your gear with + Item and say where it's kept."}</div>`;
- else h+=`<table><thead><tr><th>Item</th><th>Qty</th><th>Where</th><th>Owner</th><th>Type</th><th>Notes</th></tr></thead><tbody>${its.map(i=>`<tr><td><a data-item="${esc(i.iid)}"><b>${esc(i.name)}</b></a></td><td>${esc(i.qty)}</td>
-  <td><select class="field" data-imove="${esc(i.iid)}" aria-label="Where ${esc(i.name)} is"><option value="">(not set)</option>${locs.map(l=>`<option value="${esc(l.lid)}" ${i.loc===l.lid?"selected":""}>${esc(l.name)}</option>`).join("")}</select><div class="dim" style="font-size:11px">moved ${esc(dayName(i.moved).toLowerCase())} by ${esc(who(i.moved_by))}</div></td>
-  <td>${esc(i.owner)}</td><td>${esc(i.cat)}</td><td class="dim" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(i.notes)}">${esc(i.notes)}</td></tr>`).join("")}</tbody></table>`;
- return h+"</div></div>"}
-function locDlg(lid){const l=lid?X().locs.find(x=>x.lid===lid):{name:"",notes:""};if(!l)return;
- openDlg(lid?"Place":"New place",`<label class="dim" for="lN">Name</label><input id="lN" class="field" style="width:100%" maxlength="80" value="${esc(l.name)}" placeholder="e.g. Garage shelf 2, Sam's house, Camera bag">
- <label class="dim" for="lNo">Notes</label><input id="lNo" class="field" style="width:100%" value="${esc(l.notes)}">
- <div class="btns">${lid?'<button class="btn" id="lDel">Delete place</button>':""}<button class="btn b" id="lOk">${lid?"Save":"Add place"}</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
- $("lOk").onclick=async()=>{const name=$("lN").value.trim();if(!name)return toast("Name the place");try{const r=await api(lid?"/api/x/loc_set":"/api/x/loc_new",lid?{lid,name,notes:$("lNo").value}:{name,notes:$("lNo").value});closeDlg();if(!lid)xf.inv=r.lid;await tick();renderX(true)}catch(e){toast(e.message)}};
- if(lid)$("lDel").onclick=async()=>{try{await api("/api/x/loc_set",{lid,deleted:true});closeDlg();xf.inv="all";await tick();renderX(true)}catch(e){toast(e.message)}}}
-function itemDlg(iid){const x=X(),i=iid?x.items.find(y=>y.iid===iid):{name:"",qty:1,loc:["all","none"].includes(xf.inv)?"":xf.inv,owner:S.me,cat:"",notes:""};if(!i)return;
- const cats=[...new Set(x.items.map(y=>y.cat).filter(Boolean))];
- openDlg(iid?"Item":"New item",`<label class="dim" for="iN">Item</label><input id="iN" class="field" style="width:100%" maxlength="120" value="${esc(i.name)}" placeholder="e.g. Sony A6400, tripod, ring light">
- <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end"><div><label class="dim" for="iQ">How many</label><br><input id="iQ" type="number" min="0" class="field" style="width:80px" value="${esc(i.qty)}"></div>
- <div><label class="dim" for="iL">Where it is</label><br><select id="iL" class="field"><option value="">(not set)</option>${x.locs.map(l=>`<option value="${esc(l.lid)}" ${i.loc===l.lid?"selected":""}>${esc(l.name)}</option>`).join("")}<option value="__new">+ New place...</option></select></div>
- <div><label class="dim" for="iO">Owner</label><br><input id="iO" class="field" list="iOl" value="${esc(i.owner)}"><datalist id="iOl">${(x.people||[]).map(p=>`<option value="${esc(p)}">`).join("")}</datalist></div>
- <div><label class="dim" for="iC">Type</label><br><input id="iC" class="field" list="iCl" value="${esc(i.cat)}" placeholder="Camera, Audio, Lighting..."><datalist id="iCl">${cats.map(c=>`<option value="${esc(c)}">`).join("")}</datalist></div></div>
- <label class="dim" for="iNo">Notes</label><textarea id="iNo" class="field" rows="2" style="width:100%">${esc(i.notes)}</textarea>
- <div class="btns">${iid?'<button class="btn" id="iDel">Delete</button>':""}<button class="btn b" id="iOk">${iid?"Save":"Add item"}</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
- $("iL").onchange=async()=>{if($("iL").value!=="__new")return;const n=prompt("Name of the new place:");if(!n){$("iL").value=i.loc||"";return}
-  try{const r=await api("/api/x/loc_new",{name:n});await tick();const o=document.createElement("option");o.value=r.lid;o.textContent=n;$("iL").insertBefore(o,$("iL").lastElementChild);$("iL").value=r.lid}catch(e){toast(e.message);$("iL").value=i.loc||""}};
- $("iOk").onclick=async()=>{const b={name:$("iN").value.trim(),qty:+$("iQ").value||0,loc:$("iL").value==="__new"?"":$("iL").value,owner:$("iO").value.trim(),cat:$("iC").value.trim(),notes:$("iNo").value};if(!b.name)return toast("Name the item");
-  try{await api(iid?"/api/x/item_set":"/api/x/item_new",iid?Object.assign(b,{iid}):b);closeDlg();tick()}catch(e){toast(e.message)}};
- if(iid)$("iDel").onclick=async()=>{if(confirm("Delete "+i.name+" from the inventory?")){await api("/api/x/item_set",{iid,deleted:true});closeDlg();tick()}}}
-
-/* ---- feedback ---- */
-function fbHtml(){const all=X().feedback;let fs=all.filter(f=>xf.fb==="all"||f.type===xf.fb).filter(f=>xf.fbshow==="all"||(xf.fbshow==="open"?["open","planned"].includes(f.status):["done","wontfix"].includes(f.status)));
- let h=`<div class="head"><h2>Bugs &amp; suggestions</h2>${chipsF("fb",[["all","All"],["bug","Bugs"],["suggestion","Suggestions"]])}${chipsF("fbshow",[["open","Open"],["closed","Closed"],["all","Everything"]])}<span style="flex:1"></span><button class="btn" data-xact="bug">🐞 Report a bug</button><button class="btn b" data-xact="idea">💡 Suggest something</button></div>`;
- if(!fs.length)return h+`<div class="empty">${all.length?"Nothing here.":"Nothing reported yet. Found something broken, or have an idea for RotLab? Post it here so everyone sees it."}</div>`;
- h+=`<div class="in" style="flex:1;overflow:auto;padding:4px">`;
- for(const f of fs.sort((a,b)=>b.votes.length-a.votes.length||b.ts-a.ts)){const c=f.thread.filter(x=>x.kind==="comment").length,mine=f.votes.includes(S.me);
-  h+=`<div class="out" data-fb="${esc(f.fid)}" style="display:flex;gap:10px;align-items:center;padding:6px 8px;margin-bottom:4px;cursor:pointer"><button class="btn sm ${mine?"b":""}" data-vote="${esc(f.fid)}" title="${mine?"Remove your +1":"+1: me too / I want this"}" aria-label="Vote">▲ ${f.votes.length}</button>
-  <span class="tag" style="${f.type==="bug"?"border-color:#c55;color:#ff9a9a":"border-color:#4a7;color:#9fe0b0"}">${f.type==="bug"?"Bug":"Idea"}</span><span style="flex:1;min-width:0"><b>${esc(f.title)}</b><div class="dim" style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(who(f.by))} · ${esc(dayName(f.ts))}${c?` · 💬 ${c}`:""}${f.text?" · "+esc(f.text.slice(0,120)):""}</div></span><span class="tag">${esc(FST[f.status])}</span></div>`}
- return h+"</div>"}
-function fbNewDlg(type){openDlg(type==="bug"?"Report a bug":"Suggest something",`<div class="dim">${type==="bug"?"What went wrong? Say what you did, what you expected, and what happened instead.":"What would make RotLab better?"} Everyone you sync with sees it.</div>
- <div><label><input type="radio" name="fbT" value="bug" ${type==="bug"?"checked":""}> Bug</label> <label style="margin-left:10px"><input type="radio" name="fbT" value="suggestion" ${type!=="bug"?"checked":""}> Suggestion</label></div>
- <label class="dim" for="fbTi">Short title</label><input id="fbTi" class="field" style="width:100%" maxlength="120">
- <label class="dim" for="fbTx">Details</label><textarea id="fbTx" class="field" rows="6" style="width:100%"></textarea>
- <div class="btns"><button class="btn b" id="fbOk">Post</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
- $("fbOk").onclick=async()=>{const t=document.querySelector("[name=fbT]:checked").value,title=$("fbTi").value.trim();if(!title)return toast("Give it a short title");
-  let text=$("fbTx").value;if(t==="bug")text+=`\n\n— RotLab v${S.version} · ${navigator.userAgent.match(/(Edg|Chrome)\/[\d.]+/)?.[0]||""}`;
-  try{const r=await api("/api/x/fb_new",{type:t,title,text});await tick();if(area!=="fb")setArea("fb");fbDlg(r.fid)}catch(e){toast(e.message)}}}
-function fbDlg(fid){const f=X().feedback.find(x=>x.fid===fid);if(!f){closeDlg();return}
- openDlg((f.type==="bug"?"Bug: ":"Suggestion: ")+f.title,`<div class="dim">${esc(who(f.by))} · ${esc(dayName(f.ts))} ${esc(tm(f.ts))} · ${f.votes.length} vote${f.votes.length===1?"":"s"}${f.votes.length?" ("+f.votes.map(v=>esc(who(v))).join(", ")+")":""}</div>
- ${f.text?`<div class="in" style="padding:6px 8px;white-space:pre-wrap;max-height:220px;overflow:auto">${esc(f.text)}</div>`:""}
- <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="dim">Status:</span>${Object.entries(FST).map(([k,l])=>`<button class="btn sm ${f.status===k?"b":""}" data-fst="${k}">${l}</button>`).join("")}</div>
- <div class="in" style="max-height:200px;overflow:auto;padding:4px 8px">${f.thread.length?f.thread.map(x=>`<div><span class="dim" style="font-size:11px">${esc(dayName(x.ts))} ${esc(tm(x.ts))}</span> <b>${esc(who(x.user))}</b>${x.kind==="status"?` <span class="dim">marked it ${esc(FST[x.text]||x.text)}</span>`:": "+esc(x.text)}</div>`).join(""):'<span class="dim">No replies yet.</span>'}</div>
- <div style="display:flex;gap:6px"><input id="fbC" class="field" style="flex:1" placeholder="Reply"><button class="btn" id="fbCs">Send</button></div>
- <div class="btns"><button class="btn" id="fbCopy">Copy as text</button>${f.by===S.me?'<button class="btn" id="fbDel">Delete</button>':""}<button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true,nofocus:true});
- const re=async b=>{try{await api("/api/x/fb_act",Object.assign({fid},b));await tick();fbDlg(fid)}catch(e){toast(e.message)}};
- document.querySelectorAll("[data-fst]").forEach(b=>b.onclick=()=>re({act:"status",status:b.dataset.fst}));
- const send=()=>{const v=$("fbC").value.trim();if(v)re({act:"comment",text:v})};$("fbCs").onclick=send;$("fbC").onkeydown=e=>{if(e.key==="Enter")send()};
- $("fbCopy").onclick=async()=>{const t=`[${f.type==="bug"?"Bug":"Suggestion"}] ${f.title}\n\n${f.text}\n\n${f.thread.filter(x=>x.kind==="comment").map(x=>x.user+": "+x.text).join("\n")}`;try{await navigator.clipboard.writeText(t);toast("Copied, e.g. to paste into a GitHub issue")}catch(e){toast("Couldn't copy")}};
- if($("fbDel"))$("fbDel").onclick=async()=>{if(confirm("Delete this for everyone?")){await api("/api/x/fb_act",{fid,act:"delete"});closeDlg();tick()}}}
-
-function xLogHtml(e){const u=`<b>${esc(who(e.user))}</b>`;const t=X().tasks.find(x=>x.tid===e.tid),tl=t?`<a data-task="${esc(t.tid)}">${esc(t.title)}</a>`:"a task";
- switch(e.kind){case"task_new":return `${u} made a task, ${tl}${(e.assignees||[]).length?" for "+e.assignees.map(a=>esc(who(a))).join(", "):""}${e.due?", due "+esc(fmtDate(e.due)):""}`;
- case"task_set":return e.status==="done"?`${u} finished ${tl}`:e.status?`${u} set ${tl} to ${esc(TST[e.status]||e.status)}`:null;
- case"task_comment":return `${u} commented on ${tl}: “${esc(e.text)}”`;
- case"cal_new":return `${u} added <b>${esc(e.title)}</b> to the calendar (${esc(fmtDate(e.date))})`;
- case"inv_item_new":return `${u} added <b>${esc(e.name)}</b> to the inventory`;
- case"fb_new":return `${u} ${e.type==="bug"?"reported a bug":"suggested something"}: <a data-fb="${esc(e.fid)}">${esc(e.title)}</a>`;
- case"radio_track":return `${u} added <b>${esc(e.title)}</b> to RotRadio`;
- case"radio_cfg":return `${u} changed which tags RotRadio plays`}
- if(/^(task_|cal_|inv_|fb_|radio_)/.test(e.kind||""))return null;return undefined}
-document.addEventListener("click",e=>{const a=e.target.closest("#feed [data-task],#feed [data-fb],#foryou [data-task]");if(!a)return;e.preventDefault();a.dataset.task?taskDlg(a.dataset.task):fbDlg(a.dataset.fb)});
-
-/* ---- RotRadio ---- */
-const RA={el:null,cur:null,unlocked:false,blocked:false,muted:LS.get("radio_muted",false),vol:LS.get("radio_vol",0.6)};
-function radioNow(){const q=X().radio.queue||[],t=Date.now()/1000;return q.find(x=>x.start<=t&&t<x.start+x.dur)||null}
-function radioNext(){const q=X().radio.queue||[],t=Date.now()/1000;return q.find(x=>x.start>t)||null}
-function radioPlayer(){const a=$("radioAudio"),n=radioNow(),t=Date.now()/1000;a.volume=RA.vol;
- if(!n||!n.here||RA.muted){if(!a.paused)a.pause();RA.cur=n?n.start+n.file:null;return}
- const key=n.start+n.file,want=t-n.start,src="/media?path="+encodeURIComponent(n.file);
- if(RA.cur!==key){RA.cur=key;a.src=src;a.currentTime=Math.max(0,want)}
- else if(Math.abs(a.currentTime-want)>1.5&&a.readyState>0)a.currentTime=Math.max(0,want);
- if(a.paused)a.play().then(()=>{RA.blocked=false}).catch(()=>{RA.blocked=true;renderRadio()})}
-function renderRadio(){if(!S||!S.configured)return;const r=X().radio,n=radioNow(),nx=radioNext(),t=Date.now()/1000;
- let h=`<div style="display:flex;gap:4px;align-items:center"><b style="flex:1;white-space:nowrap">📻 RotRadio</b><button class="btn sm" id="raMute" title="${RA.muted?"Unmute":"Mute"} (only on this PC)" aria-label="${RA.muted?"Unmute":"Mute"}">${RA.muted?"🔇":"🔊"}</button><input id="raVol" type="range" min="0" max="1" step="0.05" value="${RA.vol}" style="width:70px" aria-label="Radio volume"></div>`;
- const raBtns=`<div style="display:flex;gap:4px;margin-top:2px"><button class="btn sm" id="raAdd" title="Add songs">+ Song</button><button class="btn sm" id="raTags" title="Choose which tags the radio plays">Tags</button><button class="btn sm" id="raList" title="All songs">Songs</button></div>`;
- if(n){const p=Math.min(100,(t-n.start)/n.dur*100);
-  h+=`<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(n.title)}"><b>${esc(n.title)}</b>${n.artist?` <span class="dim">· ${esc(n.artist)}</span>`:""}</div><div style="height:4px;background:#333;margin:2px 0"><div style="height:4px;width:${p.toFixed(1)}%;background:#7aa2ff"></div></div>
-  <div class="dim" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${dur(t-n.start)} / ${dur(n.dur)} · from ${esc(who(n.by))} · ${n.tags.map(esc).join(", ")}${!n.here?" · <span style='color:#ffcf6a'>still syncing to this PC</span>":""}</div>${nx?`<div class="dim" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Next: ${esc(nx.title)}</div>`:""}`;
-  if(RA.blocked&&!RA.muted)h+=`<button class="btn sm b" id="raTune" style="width:100%">▶ Click to tune in</button>`}
- else h+=`<div class="dim" style="font-size:12px">${!r.tracks.length?"No songs yet. Add some with + Song: everyone hears the same thing at the same time.":r.playable?"Starting the next song...":"No songs match the tags that are on, or new songs are still syncing (about a minute)."}</div>`;
- h+=raBtns;const box=$("radio");if(box._h===h)return;const vf=document.activeElement&&document.activeElement.id==="raVol";if(vf)return;box.innerHTML=h;box._h=h;
- $("raMute").onclick=()=>{RA.muted=!RA.muted;LS.set("radio_muted",RA.muted);RA.unlocked=true;radioPlayer();renderRadio()};
- $("raVol").oninput=e=>{RA.vol=+e.target.value;LS.set("radio_vol",RA.vol);$("radioAudio").volume=RA.vol};
- $("raTags").onclick=radioTagsDlg;$("raAdd").onclick=radioAddDlg;$("raList").onclick=radioListDlg;if($("raTune"))$("raTune").onclick=()=>{RA.blocked=false;radioPlayer();renderRadio()}}
-document.addEventListener("click",()=>{if(RA.blocked){radioPlayer()}},true);
-setInterval(()=>{if(S&&S.configured){radioPlayer();renderRadio()}},1000);
-function radioTagsDlg(){const r=X().radio,tags=Object.entries(r.tags).sort((a,b)=>b[1]-a[1]);
- openDlg("RotRadio: tags",`<div class="dim">The radio picks songs that have at least one ticked tag. This is shared: it changes what everyone hears.${r.cfg_by?" Last changed by "+esc(who(r.cfg_by))+".":""}</div>
- <div class="in" style="max-height:50vh;overflow:auto;padding:6px 8px;column-width:160px">${tags.length?tags.map(([g,n])=>`<label style="display:block"><input type="checkbox" class="raTg" value="${esc(g)}" ${r.disabled.includes(g)?"":"checked"}> ${esc(g)} <span class="dim">(${n})</span></label>`).join(""):'<span class="dim">No tags yet: they come from the songs.</span>'}</div>
- <div class="btns"><button class="btn" id="raAll">Tick all</button><button class="btn" id="raNone">Untick all</button><button class="btn b" id="raSave">Save</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
- $("raAll").onclick=()=>document.querySelectorAll(".raTg").forEach(c=>c.checked=true);$("raNone").onclick=()=>document.querySelectorAll(".raTg").forEach(c=>c.checked=false);
- $("raSave").onclick=async()=>{const off=[...document.querySelectorAll(".raTg")].filter(c=>!c.checked).map(c=>c.value);try{await api("/api/x/radio_cfg",{disabled:off});closeDlg();toast("Saved. The radio switches after the song that's playing.");tick()}catch(e){toast(e.message)}}}
-function audioDur(f){return new Promise(res=>{const a=new Audio(),u=URL.createObjectURL(f);a.preload="metadata";const done=v=>{URL.revokeObjectURL(u);res(v)};a.onloadedmetadata=()=>done(isFinite(a.duration)?a.duration:0);a.onerror=()=>done(0);setTimeout(()=>done(0),15000);a.src=u})}
-let raFiles=[];
-function radioAddDlg(){raFiles=[];const known=Object.keys(X().radio.tags).sort();
- openDlg("Add songs to RotRadio",`<div class="dim">Pick music files (mp3, m4a, ogg, wav, flac...). Every song needs <b>at least 3 tags</b>: they decide when the radio plays it. Songs are shared with everyone you sync with.</div>
- <div style="display:flex;gap:6px;align-items:center"><button class="btn" id="raPick">Choose files...</button><input type="file" id="raFile" accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac,.webm" multiple style="display:none"><span class="dim" id="raCount">No files chosen</span></div>
- <label class="dim" for="raAllTags">Tags for all of them (comma separated), added to each song's own tags</label><input id="raAllTags" class="field" style="width:100%" placeholder="e.g. chill, lofi, background">
- ${known.length?`<div class="chips" id="raKnown">${known.map(g=>`<button class="chip" data-tg="${esc(g)}">${esc(g)}</button>`).join("")}</div>`:""}
- <div class="in" id="raRows" style="max-height:40vh;overflow:auto;padding:4px"></div><div id="raProg" class="dim"></div>
- <div class="btns"><button class="btn b" id="raUp" disabled>Add to RotRadio</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`,{wide:true});
- $("raPick").onclick=()=>$("raFile").click();
- if($("raKnown"))$("raKnown").querySelectorAll("[data-tg]").forEach(b=>b.onclick=()=>{const cur=$("raAllTags").value.split(",").map(s=>s.trim()).filter(Boolean);if(!cur.includes(b.dataset.tg))cur.push(b.dataset.tg);$("raAllTags").value=cur.join(", ");raCheck()});
- $("raAllTags").oninput=raCheck;
- $("raFile").onchange=async()=>{const fs=[...$("raFile").files];raFiles=[];$("raCount").textContent="Reading "+fs.length+" file(s)...";
-  for(const f of fs){raFiles.push({f,dur:await audioDur(f),title:f.name.replace(/\.[^.]+$/,"").replace(/[_]+/g," ")})}
-  $("raCount").textContent=raFiles.length+" file(s)";
-  $("raRows").innerHTML=`<table><thead><tr><th>Title</th><th>Artist</th><th>Its own tags</th><th>Length</th></tr></thead><tbody>${raFiles.map((r,i)=>`<tr><td><input class="field raT" data-i="${i}" value="${esc(r.title)}" style="width:100%"></td><td><input class="field raA" data-i="${i}" style="width:100%"></td><td><input class="field raG" data-i="${i}" style="width:100%" placeholder="comma separated"><div class="dim raN" data-i="${i}" style="font-size:11px"></div></td><td>${r.dur?dur(r.dur):'<span style="color:#ff8a8a">can\'t read</span>'}</td></tr>`).join("")}</tbody></table>`;
-  document.querySelectorAll(".raG").forEach(x=>x.oninput=raCheck);raCheck()};
- $("raUp").onclick=raUpload}
-const raTagsOf=i=>{const own=(document.querySelector(`.raG[data-i="${i}"]`)||{}).value||"";return [...new Set((own+","+$("raAllTags").value).split(",").map(s=>s.trim().toLowerCase()).filter(Boolean))]};
-function raCheck(){let ok=raFiles.length>0;raFiles.forEach((r,i)=>{const n=raTagsOf(i).length,el=document.querySelector(`.raN[data-i="${i}"]`);if(el){el.textContent=n>=3?n+" tags ✓":"needs "+(3-n)+" more tag"+(3-n>1?"s":"");el.style.color=n>=3?"#7fd18f":"#ffb27a"}if(n<3||!r.dur)ok=false});$("raUp").disabled=!ok}
-async function raUpload(){$("raUp").disabled=true;let done=0;
- for(let i=0;i<raFiles.length;i++){const r=raFiles[i];$("raProg").textContent=`Uploading ${i+1} of ${raFiles.length}: ${r.f.name}`;
-  try{const saved=await upOne(r.f,X().radio.folder||"_hub/radio/music","","","",null);
-   await api("/api/x/radio_add",{file:saved,title:document.querySelector(`.raT[data-i="${i}"]`).value,artist:document.querySelector(`.raA[data-i="${i}"]`).value,tags:raTagsOf(i),dur:r.dur});done++}
-  catch(e){toast(r.f.name+": "+e.message)}}
- closeDlg();toast(`Added ${done} song${done===1?"":"s"}. New songs join the radio in about a minute.`);tick()}
-function radioListDlg(){const r=X().radio;
- openDlg("RotRadio: all songs ("+r.tracks.length+")",`<div class="in" style="max-height:60vh;overflow:auto"><table><thead><tr><th>Song</th><th>Tags</th><th>Length</th><th>Added by</th><th></th></tr></thead><tbody>${r.tracks.map(t=>`<tr><td><b>${esc(t.title)}</b>${t.artist?` <span class="dim">${esc(t.artist)}</span>`:""}${t.here?"":' <span class="dim">(syncing)</span>'}</td><td>${t.tags.map(g=>`<span class="tag" style="${r.disabled.includes(g)?"opacity:.45":""}">${esc(g)}</span>`).join("")}</td><td>${dur(t.dur)}</td><td>${esc(who(t.by))}</td>
-  <td style="white-space:nowrap"><button class="btn sm" data-rtag="${esc(t.rid)}">Tags...</button> <button class="btn sm" data-rdel="${esc(t.rid)}">Remove</button></td></tr>`).join("")||'<tr><td colspan="5" class="dim">No songs yet.</td></tr>'}</tbody></table></div>
- <div class="btns"><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true});
- document.querySelectorAll("[data-rtag]").forEach(b=>b.onclick=async()=>{const t=r.tracks.find(x=>x.rid===b.dataset.rtag);const v=prompt("Tags for "+t.title+" (comma separated, at least 3):",t.tags.join(", "));if(v===null)return;
-  try{await api("/api/x/radio_track_set",{rid:t.rid,tags:v.split(",")});await tick();radioListDlg()}catch(e){toast(e.message)}});
- document.querySelectorAll("[data-rdel]").forEach(b=>b.onclick=async()=>{const t=r.tracks.find(x=>x.rid===b.dataset.rdel);if(!confirm("Remove "+t.title+" from RotRadio for everyone? (The file stays in _hub\\radio\\music.)"))return;
-  try{await api("/api/x/radio_track_set",{rid:t.rid,removed:true});await tick();radioListDlg()}catch(e){toast(e.message)}})}
-
-/* ---- cameras & screen sharing (peer to peer; set up through the encrypted live layer) ---- */
-const AV_MAX_CAMS=3,AV_ICE=[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.google.com:19302"},{urls:"stun:stun.cloudflare.com:3478"}];
-const AV={mine:new Map(),peers:new Map(),remote:new Map(),streams:new Map(),open:LS.get("av_open",true),big:null,lastSent:0};
-function avAnnounce(){if(Live.status!=="on"||!S)return;AV.lastSent=Date.now();
- Live.send({t:"av",u:S.me,streams:[...AV.mine.entries()].map(([sid,m])=>({sid,kind:m.kind,label:m.label,started:m.started}))})}
-function avFresh(){const out=[];for(const [id,r] of AV.remote)if(Date.now()-r.at<15000)out.push([id,r]);return out}
-function avCams(){const all=[];for(const [sid,m] of AV.mine)if(m.kind==="cam")all.push({id:ME_ID+sid,mine:sid,started:m.started});
- for(const [id,r] of avFresh())for(const s of r.streams)if(s.kind==="cam")all.push({id:id+s.sid,started:s.started});return all.sort((a,b)=>a.started-b.started||a.id.localeCompare(b.id))}
-function avEnforce(){const cams=avCams();cams.slice(AV_MAX_CAMS).forEach(c=>{if(c.mine){avStop(c.mine);toast("Someone else turned a camera on at the same moment; only "+AV_MAX_CAMS+" cameras can be on, so yours was switched off.")}})}
-async function avStart(kind,deviceId,withMic){
- if(Live.status!=="on")return toast("Cameras and screen sharing need Live to be connected (bottom right). Check Settings → Live.");
- if(!navigator.mediaDevices)return toast("This window can't use cameras. Try opening RotLab in Edge or Chrome.");
- if(kind==="cam"&&avCams().length>=AV_MAX_CAMS)return toast(`${AV_MAX_CAMS} cameras are already on (that's the most). Ask someone to switch theirs off first.`);
- let stream;try{stream=kind==="cam"?await navigator.mediaDevices.getUserMedia({video:deviceId?{deviceId:{exact:deviceId}}:true,audio:!!withMic})
-  :await navigator.mediaDevices.getDisplayMedia({video:{frameRate:15},audio:true})}catch(e){return toast(e.name==="NotAllowedError"?"Permission was refused.":"Couldn't start: "+e.message)}
- if(kind==="cam"&&avCams().length>=AV_MAX_CAMS){stream.getTracks().forEach(t=>t.stop());return toast(`${AV_MAX_CAMS} cameras are already on.`)}
- const v=stream.getVideoTracks()[0],label=kind==="cam"?(v&&v.label||"Camera").replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)$/i,""):"Screen";
- AV.mine.set(stream.id,{stream,kind,label,started:Date.now()});stream.getVideoTracks().forEach(t=>t.onended=()=>avStop(stream.id));
- AV.open=true;LS.set("av_open",true);avAnnounce();avSyncPeers();renderAV()}
-function avStop(sid){const m=AV.mine.get(sid);if(!m)return;m.stream.getTracks().forEach(t=>t.stop());AV.mine.delete(sid);
- for(const p of AV.peers.values())for(const s of p.pc.getSenders())if(s.track&&m.stream.getTracks().includes(s.track))try{p.pc.removeTrack(s)}catch(e){}
- avAnnounce();avSyncPeers();renderAV()}
-function avStopAll(){[...AV.mine.keys()].forEach(avStop)}
-function avPeer(id){let p=AV.peers.get(id);if(p)return p;
- const pc=new RTCPeerConnection({iceServers:AV_ICE});p={pc,makingOffer:false,ignoreOffer:false,polite:ME_ID>id,idle:0};AV.peers.set(id,p);
- pc.onnegotiationneeded=async()=>{try{p.makingOffer=true;await pc.setLocalDescription();Live.send({t:"rtc",u:S.me,to:id,d:pc.localDescription.toJSON()})}catch(e){}finally{p.makingOffer=false}};
- pc.onicecandidate=({candidate})=>{if(candidate)Live.send({t:"rtc",u:S.me,to:id,c:candidate.toJSON()})};
- pc.ontrack=({streams:[s]})=>{if(!s)return;AV.streams.set(s.id,{stream:s,peer:id});s.onremovetrack=()=>renderAV();renderAV()};
- pc.onconnectionstatechange=()=>{if(["failed","closed"].includes(pc.connectionState)){avDrop(id)}renderAV()};
- return p}
-function avDrop(id){const p=AV.peers.get(id);if(!p)return;try{p.pc.close()}catch(e){}AV.peers.delete(id);for(const [k,v] of AV.streams)if(v.peer===id)AV.streams.delete(k);renderAV()}
-function avSyncPeers(){if(!S)return;const iHave=AV.mine.size>0;
- for(const [id,r] of avFresh()){if(!(iHave||r.streams.length))continue;const p=avPeer(id);
-  const sent=new Set(p.pc.getSenders().map(s=>s.track).filter(Boolean));
-  for(const m of AV.mine.values())for(const t of m.stream.getTracks())if(!sent.has(t))try{p.pc.addTrack(t,m.stream)}catch(e){}}
- for(const [id,p] of AV.peers){const r=AV.remote.get(id),fresh=r&&Date.now()-r.at<15000;
-  if(!fresh||(!iHave&&!r.streams.length)){p.idle++;if(p.idle>3)avDrop(id)}else p.idle=0}}
-async function avSignal(m){const id=m.from;if(m.to!==ME_ID)return;const p=avPeer(id),pc=p.pc;
- try{if(m.d){const offerCollision=m.d.type==="offer"&&(p.makingOffer||pc.signalingState!=="stable");p.ignoreOffer=!p.polite&&offerCollision;if(p.ignoreOffer)return;
-   await pc.setRemoteDescription(m.d);if(m.d.type==="offer"){await pc.setLocalDescription();Live.send({t:"rtc",u:S.me,to:id,d:pc.localDescription.toJSON()})}}
-  else if(m.c){try{await pc.addIceCandidate(m.c)}catch(e){if(!p.ignoreOffer)throw e}}}catch(e){console.warn("av",e)}}
-function avOnLive(m){if(m.t==="av"){const had=AV.remote.get(m.from);AV.remote.set(m.from,{u:m.u,streams:m.streams||[],at:Date.now()});
-  if(!had&&AV.mine.size)avAnnounce();avSyncPeers();avEnforce();renderAV();return true}
- if(m.t==="rtc"){avSignal(m);return true}
- if(m.t==="bye"){AV.remote.delete(m.from);avDrop(m.from);return false}return false}
-setInterval(()=>{if(!S)return;if(Date.now()-AV.lastSent>(AV.mine.size?4000:12000))avAnnounce();avSyncPeers();renderAV()},4000);
-window.addEventListener("beforeunload",()=>avStopAll());
-function avTiles(){const out=[];for(const [sid,m] of AV.mine)out.push({key:"me"+sid,stream:m.stream,who:"You",label:m.label,kind:m.kind,mine:true,sid});
- for(const [id,r] of avFresh())for(const s of r.streams){const got=AV.streams.get(s.sid);if(got&&got.stream.getVideoTracks().some(t=>t.readyState==="live"))out.push({key:id+s.sid,stream:got.stream,who:r.u,label:s.label,kind:s.kind})
-  else out.push({key:id+s.sid,who:r.u,label:s.label,kind:s.kind,waiting:true})}return out}
-function renderAV(){const box=$("avPanel");if(!box||!S)return;const tiles=avTiles(),cams=avCams().length;
- box.style.display=tiles.length?"flex":"none";const head=$("avHead");
- head.innerHTML=`<b style="flex:1">🎥 Video · ${tiles.length} on · cameras ${cams}/${AV_MAX_CAMS}</b>${AV.mine.size?'<button class="btn sm" id="avOff">Stop mine</button>':""}<button class="btn sm" id="avMin" aria-label="${AV.open?"Minimise":"Show"} video">${AV.open?"–":"□"}</button>`;
- $("avMin").onclick=()=>{AV.open=!AV.open;LS.set("av_open",AV.open);renderAV()};if($("avOff"))$("avOff").onclick=avStopAll;
- const grid=$("avGrid");grid.style.display=AV.open?"grid":"none";const keys=new Set(tiles.map(t=>t.key));
- [...grid.children].forEach(c=>{if(!keys.has(c.dataset.key))c.remove()});
- for(const t of tiles){let el=grid.querySelector(`[data-key="${CSS.escape(t.key)}"]`);
-  if(!el){el=document.createElement("div");el.className="avTile";el.dataset.key=t.key;el.innerHTML=`<video autoplay playsinline></video><div class="avLbl"></div>`;el.onclick=()=>{AV.big=AV.big===t.key?null:t.key;renderAV()};grid.appendChild(el)}
-  const v=el.querySelector("video");if(t.stream&&v.srcObject!==t.stream){v.srcObject=t.stream;v.muted=!!t.mine;v.play().catch(()=>{})}if(t.waiting)v.srcObject=null;
-  el.classList.toggle("big",AV.big===t.key);el.classList.toggle("screen",t.kind==="screen");
-  el.querySelector(".avLbl").textContent=`${t.who} · ${t.kind==="screen"?"🖥 screen":"📷 "+t.label}${t.waiting?" · connecting...":""}`}}
-async function camDlg(){if(!navigator.mediaDevices)return toast("This window can't use cameras.");
- let devs=[];try{devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput");
-  if(devs.length&&!devs[0].label){const s=await navigator.mediaDevices.getUserMedia({video:true});s.getTracks().forEach(t=>t.stop());devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput")}}catch(e){}
- const using=new Set([...AV.mine.values()].filter(m=>m.kind==="cam").map(m=>m.stream.getVideoTracks()[0]?.getSettings().deviceId)),left=AV_MAX_CAMS-avCams().length;
- openDlg("Turn a camera on",`<div>Cameras on right now: <b>${avCams().length} of ${AV_MAX_CAMS}</b> (for everyone together).</div>
- ${!devs.length?'<div style="color:#ffb4b4">No camera found on this PC.</div>':`<label class="dim" for="camSel">Camera</label><select id="camSel" class="field" style="width:100%">${devs.map((d,i)=>`<option value="${esc(d.deviceId)}" ${using.has(d.deviceId)?"disabled":""}>${esc(d.label||"Camera "+(i+1))}${using.has(d.deviceId)?" (on)":""}</option>`).join("")}</select>
- <label><input type="checkbox" id="camMic"> Also send my microphone</label>`}
- <div class="dim">Video goes straight to the other people's RotLab (peer to peer). It may not connect on some school, work or mobile networks.</div>
- <div class="btns"><button class="btn b" id="camGo" ${!devs.length||left<=0?"disabled":""}>${left<=0?"All "+AV_MAX_CAMS+" cameras are on":"Turn on"}</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
- if($("camGo")&&devs.length)$("camGo").onclick=()=>{const id=$("camSel").value,mic=$("camMic").checked;closeDlg();avStart("cam",id,mic)}}
-
 /* ---------------- main loop ---------------- */
-function renderAll(force){if(!S||!S.configured)return;renderProjects();renderForYou();renderTabs();renderCenter(force);renderPeople();renderStatus();renderFeed(false);renderBanners();renderRadio();renderAV();
+function renderAll(force){if(!S||!S.configured)return;renderProjects();renderForYou();renderTabs();renderCenter(force);renderPeople();renderStatus();renderFeed(false);renderBanners();
  if(openTicket&&dlgOpen()){const r=W.requests.find(x=>x.rid===openTicket);if(r){const ta=$("tkText"),sig=JSON.stringify([r.thread.length,r.status]);if(!(ta&&ta.value)&&!tkFiles.length&&$("dlgBody")._sig!==sig)ticketDlg(r.rid)}}}
 let marking=false;
 async function tick(){

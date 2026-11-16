@@ -23,13 +23,13 @@ One window for your shared VEGAS project: a media library for the project folder
 
 ## Setting it up on a new PC
 1. Easiest: run the one-line installer from https://github.com/doolz99/rotlab in PowerShell. (If you use a zip instead: right-click it → Properties → tick Unblock before unzipping.)
-2. The program goes into `%LOCALAPPDATA%\RotLab\app` on each PC; the project folder is `C:\VegasProject` (use the same path on both PCs).
+2. Files end up in `C:\VegasProject\_hub\app\` (use the same path on both PCs).
 3. Double-click **Install RotLab.cmd**. If Python is missing it offers to install it for you, then opens the installer.
 4. Type your name, leave everything ticked, click **Install**. File sync is set up for you; nothing else to download.
 5. Join your friend: **Sync** menu → paste their invite code → **Join**.
 
 ## Updates
-RotLab checks GitHub (doolz99/rotlab) every few hours and shows a bar when there's a new version; it's installed only when you click **Install and restart**. To undo an update: **Help → About → Go back to an older version**.
+RotLab checks GitHub (doolz99/rotlab) every few hours and installs new versions by itself. Also, new versions of `hub.py`, `ui.html` or `phone.html` arriving in `_hub\app` (from either PC) install themselves. The window reloads, or the hub restarts when nobody is using it.
 
 ## Where things live
 - `_hub\` inside the project: chat, notes, log, presence, project history (shared via sync).

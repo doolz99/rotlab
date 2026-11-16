@@ -1,23 +1,5 @@
 # RotLab
 
-Version 5.2 includes the Tasks, Calendar, Inventory, Feedback, RotRadio and Call features made in normanbatesbmotel-boop's fork.
-
-## Working on RotLab together
-
-1. Each person works in their own fork on GitHub (the **Sync fork** button there brings in the latest from here first).
-2. When something's ready, open a **pull request** to doolz99/rotlab (Contribute → Open pull request).
-3. It gets looked at and tested, then merged into `main`. Both PCs then show *Version X is available* and you each click **Install and restart**.
-4. If an update breaks something: **Help → About → Go back to an older version** (RotLab keeps the last five on each PC).
-
-## What this fork adds
-
-- **Tasks** (tab): tasks with a deadline, a list of requirements people tick off, priority, an optional project, and any number of people assigned (including yourself). Comments and status (To do / Doing / Done / Cancelled). Tasks due within a week show in the strip at the top.
-- **Calendar** (tab): a month view. Task deadlines appear on it automatically; add your own events (one day or several, with a time and notes).
-- **Inventory** (tab): places (a room, a shelf, a bag, someone's house) and the things you own, with how many, owner, type and notes. Move things between places from the list; it shows who moved them and when.
-- **Feedback** (tab, or Help menu): report bugs and suggest ideas, vote +1, reply, and mark them Planned / Done / Won't do.
-- **RotRadio** (right column): anyone can add songs (each needs at least 3 tags). One PC picks the songs and everyone hears the same song at the same moment. Mute and volume are per PC; the **Tags** button chooses which tags the radio plays (shared). Songs are kept in `_hub\radio\music` and sync like everything else.
-- **Cameras and screen sharing** (Call menu): anyone can turn on a camera (up to **3 cameras in total** across everyone) or share their screen. Video goes peer to peer, set up through RotLab's encrypted Live connection, with public STUN servers (Google, Cloudflare) helping the PCs find each other. It works on most home internet but may not connect on strict school, work or mobile networks. Live must be on (Settings).
-
 A shared hub for a VEGAS video project between two PCs: a media library for the project folder (video, audio, images, graphics, renders, project files), notes and tags on files, project-file history, chat, a log of what changed, uploads from a phone, and file sync between the PCs (Syncthing, set up automatically).
 
 ## Invite a friend (easiest)
