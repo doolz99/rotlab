@@ -1,5 +1,5 @@
 {
- "version": "5.8",
+ "version": "5.9",
  "files": [
   "ui.html",
   "phone.html",
@@ -20,5 +20,5 @@
   "emoji-angry.webp",
   "hub.py"
  ],
- "notes": "Fixed RotLab closing itself (two copies could share the port, then one shut down). Radio mute and volume are remembered. New: Broadcast (Call menu): hold a key to talk to everyone while the music dips."
+ "notes": "Name colours (click your name). Soundboard (🎺 in the radio box). AFK button. Drag music onto the radio or the Add songs window, add many at once and tag the ticked ones together. Status (program/VEGAS/AFK) now updates within about a second."
 }

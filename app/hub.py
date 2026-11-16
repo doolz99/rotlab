@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "5.8"
+HUB_VERSION = "5.9"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -1420,6 +1420,35 @@ def write_presence(status):
         write_json_atomic(os.path.join(PRESENCE_DIR, slug(me()) + ".json"),
                           {"user": me(), "status": status, "ts": now(), "version": HUB_VERSION})
         quick_scan("_hub/presence")
+
+
+STATUS_NOW = {"status": None, "seq": 0}
+
+
+def status_loop():
+    """Works out what you're doing every second (VEGAS every 2 s) and shares it as soon as it changes."""
+    last_written, last_write, n = None, 0, 0
+    while True:
+        try:
+            if me():
+                if n % 2 == 0:
+                    v = detect_vegas()
+                    with STATE_LOCK:
+                        STATE["vegas"] = v
+                with STATE_LOCK:
+                    vegas, ui_seen, view = STATE["vegas"], STATE["ui_seen"], STATE["ui_view"]
+                status = compute_status(vegas, ui_seen, view)
+                if status != STATUS_NOW["status"]:
+                    STATUS_NOW["status"] = status
+                    STATUS_NOW["seq"] += 1
+                # the presence file syncs to the others; don't rewrite it more than every 2 s
+                if (status != last_written and now() - last_write >= 2) or now() - last_write > PRESENCE_HEARTBEAT:
+                    write_presence(status)
+                    last_written, last_write = status, now()
+        except Exception as e:
+            print("status:", repr(e))
+        n += 1
+        time.sleep(1)
 
 
 def write_offline_presence():
@@ -3086,6 +3115,8 @@ def focus_text(f, mode):
 
 
 def compute_status(vegas, ui_seen, view):
+    if CONFIG.get("afk"):
+        return {"kind": "away", "text": "AFK"}
     if vegas:
         proj = vegas.get("project") or "a project"
         return {"kind": "editing", "text": "in %s, %s" % (vegas.get("app", "VEGAS"), proj), "project": vegas.get("project") or ""}
@@ -3111,9 +3142,8 @@ def monitor():
         try:
             if tick % 2 == 0:
                 detect_renders(scan_library())
-            vegas = detect_vegas() if tick % 2 == 0 else STATE["vegas"]
             with STATE_LOCK:
-                STATE["vegas"] = vegas
+                vegas = STATE["vegas"]
                 ui_seen, view = STATE["ui_seen"], STATE["ui_view"]
             if tick % 2 == 0:
                 sort_inbox()
@@ -3129,10 +3159,6 @@ def monitor():
                         print("storage:", repr(e))
                 watch_poll()
                 watch_flush()
-                status = compute_status(vegas, ui_seen, view)
-                if status != last_written or now() - last_presence_write > PRESENCE_HEARTBEAT:
-                    write_presence(status)
-                    last_written, last_presence_write = status, now()
             if tick % 20 == 5:
                 threading.Thread(target=github_check, daemon=True).start()
             if True:
@@ -3219,7 +3245,7 @@ RADIO_EXT = {".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm"}
 RADIO_SETTLE = 45      # seconds a new track waits before it can be picked (so it has synced to the other PCs)
 RADIO_AHEAD = 150      # the DJ PC keeps this many seconds of schedule ahead
 TASK_STATUS = ["todo", "doing", "done", "cancelled"]
-X_QUIET = {"part_set", "task_del", "inv_loc_set", "fb_vote", "fb_del"}
+X_QUIET = {"part_set", "task_del", "inv_loc_set", "fb_vote", "fb_del", "user_color", "sfx_set"}
 FB_STATUS = ["open", "planned", "done", "wontfix"]
 for _d in (RADIO_DIR, RADIO_MUSIC):
     os.makedirs(_d, exist_ok=True)
@@ -3266,9 +3292,24 @@ def x_state():
     radio_cfg = {"disabled": [], "blocked": [], "by": None, "ts": 0}
     lib_over = {}
     radio_groups = {"groups": [], "by": None, "ts": 0, "model": ""}
-    skips = []
+    skips, colors, sounds = [], {}, {}
     for e in ws_events():
         k, u, ts = e.get("kind") or "", e.get("user"), e.get("ts", 0)
+        if k == "user_color":
+            if re.match(r"^#[0-9a-fA-F]{6}$", str(e.get("color", ""))):
+                colors[u] = e["color"]
+            elif not e.get("color"):
+                colors.pop(u, None)
+            continue
+        if k == "sfx_new" and e.get("sid") and e.get("file"):
+            sounds[e["sid"]] = {"sid": e["sid"], "file": e["file"], "name": e.get("name") or "Sound", "dur": float(e.get("dur") or 0),
+                                "emoji": e.get("emoji", ""), "by": u, "ts": ts, "removed": False}
+            continue
+        if k == "sfx_set" and e.get("sid") in sounds:
+            for f in ("name", "emoji", "removed"):
+                if f in e:
+                    sounds[e["sid"]][f] = e[f]
+            continue
         if not k.startswith(("task_", "cal_", "inv_", "fb_", "radio_")):
             continue
         if k == "task_new" and e.get("tid") and e["tid"] not in tasks:
@@ -3368,7 +3409,8 @@ def x_state():
              "items": {k: v for k, v in items.items() if not v["deleted"]},
              "feedback": {k: v for k, v in fb.items() if not v["deleted"]},
              "tracks": {k: v for k, v in tracks.items() if not v["removed"]},
-             "radio_cfg": radio_cfg, "radio_groups": radio_groups, "lib_over": lib_over, "skips": skips}
+             "radio_cfg": radio_cfg, "radio_groups": radio_groups, "lib_over": lib_over, "skips": skips,
+             "colors": colors, "sounds": {k: v for k, v in sounds.items() if not v["removed"]}}
     with WS_LOCK:
         X_CACHE["sig"], X_CACHE["state"] = sig, state
     return state
@@ -3723,6 +3765,22 @@ def radio_view():
             "folder": rel(RADIO_MUSIC)}
 
 
+SFX_DIR = os.path.join(RADIO_DIR, "sounds")
+os.makedirs(SFX_DIR, exist_ok=True)
+
+
+def sfx_view(st_):
+    out = []
+    for s in sorted(st_["sounds"].values(), key=lambda s: s["ts"]):
+        s = dict(s)
+        try:
+            s["here"] = os.path.isfile(safe_path(s["file"]))
+        except ValueError:
+            s["here"] = False
+        out.append(s)
+    return out
+
+
 def x_view():
     st_ = x_state()
     return {"tasks": sorted(st_["tasks"].values(), key=lambda t: (t["due"] or "9999", t["ts"])),
@@ -3731,6 +3789,7 @@ def x_view():
             "items": sorted(st_["items"].values(), key=lambda i: i["name"].lower()),
             "feedback": sorted(st_["feedback"].values(), key=lambda f: -f["ts"]),
             "radio": radio_view(), "prefs": CONFIG.get("prefs") or {}, "broadcast": bc_cfg(),
+            "colors": st_["colors"], "sounds": sfx_view(st_), "afk": bool(CONFIG.get("afk")), "my_status": STATUS_NOW["status"],
             "people": sorted({p["user"] for p in read_presence()} | ({me()} if me() else set()), key=str.lower),
             "task_status": TASK_STATUS, "fb_status": FB_STATUS}
 
@@ -3837,6 +3896,41 @@ def x_post(path, b):
         return 200, {"ok": True}
     if p == "ptt":
         return 200, {"down": PTT["down"], "seq": PTT["seq"], "ok": PTT["ok"]}
+    if p == "color":
+        c = str(b.get("color") or "")
+        if c and not re.match(r"^#[0-9a-fA-F]{6}$", c):
+            raise ValueError("Pick a colour")
+        ws_add("user_color", color=c.lower())
+        return 200, {"ok": True}
+    if p == "afk":
+        CONFIG["afk"] = bool(b.get("on"))
+        save_config()
+        return 200, {"ok": True, "afk": CONFIG["afk"]}
+    if p == "mystatus":
+        return 200, {"status": STATUS_NOW["status"], "seq": STATUS_NOW["seq"]}
+    if p == "sfx_add":
+        f = _txt(b.get("file"), 400)
+        if not f.startswith(rel(SFX_DIR) + "/") or not os.path.isfile(safe_path(f)):
+            raise ValueError("Upload the sound first")
+        if os.path.splitext(f)[1].lower() not in RADIO_EXT:
+            raise ValueError("Sounds can be mp3, m4a, aac, ogg, opus, wav, flac or webm")
+        dur = float(b.get("dur") or 0)
+        if not 0 < dur <= 30:
+            raise ValueError("Sounds can be up to 30 seconds long")
+        sid = uuid.uuid4().hex[:10]
+        ws_add("sfx_new", sid=sid, file=f, name=_txt(b.get("name"), 40) or os.path.splitext(os.path.basename(f))[0][:40],
+               dur=round(dur, 2), emoji=_txt(b.get("emoji"), 8))
+        return 200, {"ok": True, "sid": sid}
+    if p == "sfx_set":
+        d = {}
+        if "name" in b:
+            d["name"] = _txt(b["name"], 40) or "Sound"
+        if "emoji" in b:
+            d["emoji"] = _txt(b["emoji"], 8)
+        if b.get("removed"):
+            d["removed"] = True
+        ws_add("sfx_set", sid=b.get("sid"), **d)
+        return 200, {"ok": True}
     if p == "share_focus":
         mode = b.get("mode") if b.get("mode") in ("off", "app", "title") else "off"
         CONFIG["share_focus"] = mode
@@ -4808,6 +4902,7 @@ def main():
     threading.Thread(target=close_tv_windows, daemon=True).start()
     threading.Thread(target=monitor, daemon=True).start()
     threading.Thread(target=ptt_loop, daemon=True).start()
+    threading.Thread(target=status_loop, daemon=True).start()
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     start_phone_server()
     try:

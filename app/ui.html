@@ -188,7 +188,8 @@ label.ck{display:flex;gap:6px;align-items:center}
    <button data-act="sortinbox">Sort Inbox now</button><hr>
    <button data-act="settings">Settings...</button>
    <button data-act="ai">AI automation...</button>
-   <button data-act="share">Show what I'm doing...</button><hr>
+   <button data-act="share">Show what I'm doing...</button>
+   <button data-act="color">My name colour...</button><hr>
    <button data-act="quit">Quit RotLab</button></div></div>
   <div class="mi"><button><u>P</u>roject</button><div class="drop out">
    <button data-act="projset">Rename / change type...</button>
@@ -298,7 +299,7 @@ async function act(a){try{
  else if(a.startsWith("v-"))setArea(a.slice(2));
  else if(a==="msgonly"){msgOnly=!msgOnly;LS.set("msgonly",msgOnly);$("feed")._last="";renderFeed(true);toast(msgOnly?"Feed shows only messages":"Feed shows messages and changes")}
  else if(a==="reload")location.reload();
- else if(a==="ai")aiDlg();else if(a==="share")shareDlg();
+ else if(a==="ai")aiDlg();else if(a==="share")shareDlg();else if(a==="color")colorDlg();
  else if(a==="bc")bcDlg();
  else if(a==="cam")camDlg();else if(a==="screen")avStart("screen");else if(a==="avstop")avStopAll();
  else if(a==="bug")fbNewDlg("bug");else if(a==="idea")fbNewDlg("suggestion");
@@ -544,9 +545,9 @@ function ticketHtml(r){const c=TYPE_COLOR[r.type]||"#ccc",mine=r.by===S.me,onIt=
  for(const t of r.thread){const av=`<div class="av" style="background:${t.user===S.me?"#1f3a2a":"#32264a"}">${esc((t.user||"?")[0].toUpperCase())}</div>`;let body="";
   if(t.kind==="claim")body=`<span class="dim"><b style="color:var(--text)">${esc(who(t.user))}</b> said they'll do it · ${esc(ago(t.ts))}</span>`;
   else if(t.kind==="unclaim")body=`<span class="dim"><b style="color:var(--text)">${esc(who(t.user))}</b> gave it back</span>`;
-  else if(t.kind==="comment")body=`<b>${esc(who(t.user))}</b> <span class="dim">· ${esc(ago(t.ts))}</span><div style="white-space:pre-wrap">${esc(t.text)}</div>`;
-  else if(t.kind==="submit")body=`<b>${esc(who(t.user))}</b> <span class="dim">· ${esc(ago(t.ts))}</span>${t.text?`<div style="white-space:pre-wrap">${esc(t.text)}</div>`:""}${(t.files||[]).length?`<div class="take">${t.files.map(f=>mediaPlayer(f)).join("")}</div>`:""}${mine&&r.status!=="done"&&r.status!=="cancelled"?`<div style="margin-top:5px"><button class="btn sm b" data-approve="${t.take}">✓ Done, use ${t.take===lastTake?"this":"this one"}</button></div>`:""}`;
-  else if(t.kind==="review")body=t.verdict==="approve"?`<b>${esc(who(t.user))}</b> <span style="color:#9fe0b0">marked it done</span> <span class="dim">· ${esc(ago(t.ts))}</span>${t.text?`<div style="white-space:pre-wrap">${esc(t.text)}</div>`:""}${(t.files||[]).length?`<div class="dim" style="font-size:12px">Filed: ${t.files.map(f=>`<a data-file="${esc(f)}">${esc(f)}</a>`).join(", ")}</div>`:""}`:`<b>${esc(who(t.user))}</b> <span class="dim">· ${esc(ago(t.ts))}</span><div style="white-space:pre-wrap">${esc(t.text)}</div>`;
+  else if(t.kind==="comment")body=`${whoB(t.user)} <span class="dim">· ${esc(ago(t.ts))}</span><div style="white-space:pre-wrap">${esc(t.text)}</div>`;
+  else if(t.kind==="submit")body=`${whoB(t.user)} <span class="dim">· ${esc(ago(t.ts))}</span>${t.text?`<div style="white-space:pre-wrap">${esc(t.text)}</div>`:""}${(t.files||[]).length?`<div class="take">${t.files.map(f=>mediaPlayer(f)).join("")}</div>`:""}${mine&&r.status!=="done"&&r.status!=="cancelled"?`<div style="margin-top:5px"><button class="btn sm b" data-approve="${t.take}">✓ Done, use ${t.take===lastTake?"this":"this one"}</button></div>`:""}`;
+  else if(t.kind==="review")body=t.verdict==="approve"?`${whoB(t.user)} <span style="color:#9fe0b0">marked it done</span> <span class="dim">· ${esc(ago(t.ts))}</span>${t.text?`<div style="white-space:pre-wrap">${esc(t.text)}</div>`:""}${(t.files||[]).length?`<div class="dim" style="font-size:12px">Filed: ${t.files.map(f=>`<a data-file="${esc(f)}">${esc(f)}</a>`).join(", ")}</div>`:""}`:`${whoB(t.user)} <span class="dim">· ${esc(ago(t.ts))}</span><div style="white-space:pre-wrap">${esc(t.text)}</div>`;
   else if(t.kind==="status")body=`<span class="dim">${esc(who(t.user))} ${esc(t.text||"changed the status")}</span>`;
   else continue;
   h+=`<div class="post">${av}<div style="flex:1;min-width:0">${body}</div></div>`}
@@ -639,7 +640,7 @@ async function selectFile(path,keep){selPath=path;document.querySelectorAll("#li
    <div id="dDeps"></div>
    <div style="display:flex;gap:5px;flex-wrap:wrap"><button class="btn sm" id="dOpen">${d.app?"Open in "+esc(d.app):"Open"}</button>${d.app?`<button class="btn sm" id="dHist">History (${d.history_count})</button>`:""}<button class="btn sm" id="dShow">Show in folder</button><button class="btn sm" id="dUse">Use in...</button><button class="btn sm" id="dReq">Request...</button></div>
    <div class="chips" id="dTags">${TAGS.concat(d.tags.filter(t=>!TAGS.includes(t))).map(t=>`<button class="chip ${d.tags.includes(t)?"on":""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}<button class="chip" id="dTagAdd">+ tag</button></div>
-   <div class="cmts out">${all.length?all.map(c=>`<div class="cmt ${c.resolved?"res":""}"><span class="dim" style="min-width:34px;font-size:12px">${c.t!=null?`<a data-seek="${c.t}">${dur(c.t)}</a>`:c.x!=null?"#"+(cs.filter(z=>z.x!=null).indexOf(c)+1):""}</span><span style="flex:1"><b>${esc(who(c.user))}</b>: ${esc(c.text)} <span class="dim" style="font-size:11px">${esc(ago(c.ts))}${c.via==="upload"?" · upload note":""}</span></span>${c.note?"":`<button class="btn sm" data-mkreq="${c.id}" title="Make a request from this">→ req</button><button class="btn sm" data-resolve="${c.id}" data-v="${c.resolved?0:1}">${c.resolved?"Undo":"Done"}</button>`}</div>`).join(""):`<div class="dim" style="font-size:12px">No comments yet.${timed?" Pause anywhere and comment to mark that moment.":img?" Click the picture to pin a comment to a spot.":""}</div>`}</div>
+   <div class="cmts out">${all.length?all.map(c=>`<div class="cmt ${c.resolved?"res":""}"><span class="dim" style="min-width:34px;font-size:12px">${c.t!=null?`<a data-seek="${c.t}">${dur(c.t)}</a>`:c.x!=null?"#"+(cs.filter(z=>z.x!=null).indexOf(c)+1):""}</span><span style="flex:1">${whoB(c.user)}: ${esc(c.text)} <span class="dim" style="font-size:11px">${esc(ago(c.ts))}${c.via==="upload"?" · upload note":""}</span></span>${c.note?"":`<button class="btn sm" data-mkreq="${c.id}" title="Make a request from this">→ req</button><button class="btn sm" data-resolve="${c.id}" data-v="${c.resolved?0:1}">${c.resolved?"Undo":"Done"}</button>`}</div>`).join(""):`<div class="dim" style="font-size:12px">No comments yet.${timed?" Pause anywhere and comment to mark that moment.":img?" Click the picture to pin a comment to a spot.":""}</div>`}</div>
    <div style="display:flex;gap:6px;align-items:center"><label for="dNote" class="dim" id="dAt" style="font-size:12px;white-space:nowrap">Comment:</label><input id="dNote" data-p="${esc(path)}" class="field" style="flex:1;min-width:0"><button class="btn" id="dNoteBtn">Add</button></div></div>`;
  $("detail").style.display="flex";$("dNote").value=prev;
  $("dOpen").onclick=async()=>{if(d.remote)return toast("Get it first");try{if(d.app){const r=await api("/api/open_project",{path});if(r.waiting)toast("Getting "+r.waiting+" file"+(r.waiting>1?"s":"")+" it uses ("+size(r.bytes||0)+"), opening when they're here")}else await api("/api/open",{path})}catch(e){toast(e.message)}};
@@ -681,10 +682,10 @@ function gotoFile(p){if(dlgOpen())closeDlg();markSeen();pid=projOfPath(p)||S.sha
 let pend=[];
 $("filePick").onchange=()=>{const fs=[...$("filePick").files];$("filePick").value="";if(fs.length)uploadDlg(fs)};
 let dragN=0;
-window.addEventListener("dragenter",e=>{if([...(e.dataTransfer?.types||[])].includes("Files")){dragN++;$("dropzone").classList.add("show")}});
+window.addEventListener("dragenter",e=>{if(document.querySelector("#modal.show [data-drop]"))return;if([...(e.dataTransfer?.types||[])].includes("Files")){dragN++;$("dropzone").classList.add("show")}});
 window.addEventListener("dragleave",()=>{dragN=Math.max(0,dragN-1);if(!dragN)$("dropzone").classList.remove("show")});
 window.addEventListener("dragover",e=>e.preventDefault());
-window.addEventListener("drop",e=>{e.preventDefault();dragN=0;$("dropzone").classList.remove("show");const fs=[...(e.dataTransfer?.files||[])].filter(f=>f.size>0||f.type);if(fs.length)uploadDlg(fs)});
+window.addEventListener("drop",e=>{e.preventDefault();if(document.querySelector("#modal.show [data-drop]")||(e.target.closest&&e.target.closest("[data-drop]")))return;dragN=0;$("dropzone").classList.remove("show");const fs=[...(e.dataTransfer?.files||[])].filter(f=>f.size>0||f.type);if(fs.length)uploadDlg(fs)});
 function uploadDlg(files,target){target=target||pid;pend=files.map(f=>({f,note:""}));const total=files.reduce((a,f)=>a+f.size,0);
  const projOpts=W.projects.filter(p=>!p.archived).map(p=>`<option value="${p.pid}" ${p.pid===target?"selected":""}>${esc(p.name)}</option>`).join("")+`<option value="${S.shared}" ${target===S.shared?"selected":""}>Shared</option>`;
  const destOpts=p=>['<option value="auto">Automatic (by type'+(S.settings.date_folders?", per day":"")+')</option>'].concat((S.folders[p]||[]).map(f=>`<option>${esc(f)}</option>`)).join("");
@@ -707,11 +708,8 @@ async function runUpload(note,tags,dest,target){["uOk","uCancel"].forEach(i=>$(i
  dlgLocked=false;closeDlg();libGen=-1;tick();if(fail.length)alert("Some files couldn't be added:\n\n"+fail.join("\n"));else toast("Added "+ok+" file"+(ok>1?"s":"")+" to "+pname(target))}
 
 /* ---------------- people + one feed ---------------- */
-function renderPeople(){const ppl=(S.people||[]).slice().sort((a,b)=>(a.user===S.me)-(b.user===S.me));if(!ppl.some(p=>p.user===S.me))ppl.push({user:S.me,live:"hub",status:{text:"here"}});
- const h=ppl.map(p=>`<div style="display:flex;gap:8px;align-items:center"><span class="dot ${p.live}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(who(p.user))}</b>${p.live==="offline"?'<span class="dim">: offline'+(p.ts?", seen "+esc(dayName(p.ts).toLowerCase())+" "+esc(tm(p.ts)):"")+"</span>":": "+esc(p.status.text||p.live)}</span></div>`).join("");
- if($("people")._h!==h){$("people").innerHTML=h;$("people")._h=h}}
 function fileLink(f){return `<a data-go="${esc(f)}">${esc(short(f))}</a>`}
-function logHtml(e){const u=`<b>${esc(who(e.user))}</b>`,files=e.files||[],n=e.count||files.length,fld=e.folder&&e.folder!=="."?e.folder:"the top folder";
+function logHtml(e){const u=`${whoB(e.user)}`,files=e.files||[],n=e.count||files.length,fld=e.folder&&e.folder!=="."?e.folder:"the top folder";
  const grp=(verb,prep)=>{if(n===1&&files[0])return `${u} ${verb} ${fileLink(files[0])}`;const open=openGroups.has(e.id);return `${u} ${verb} ${n} files ${prep} ${esc(fld)} <a data-grp="${esc(e.id)}">[${open?"-":"+"}]</a>`+(open?`<div class="sub">${files.map(f=>`<div>${fileLink(f)}</div>`).join("")}</div>`:"")};
  switch(e.type){case"files":if(e.action==="added")return e.via==="online"&&n===1?`${u} downloaded ${fileLink(files[0])}`:grp("added","to");if(e.action==="modified")return grp("changed","in");if(e.action==="restored")return `${u} restored ${fileLink(files[0])}`;
    if(e.action==="deleted")return n===1?`${u} deleted ${esc(short(files[0]))}${e.user!==S.me?` <a data-undel="${esc(files[0])}">restore</a>`:""}`:`${u} deleted ${n} files from ${esc(fld)}`;
@@ -724,7 +722,7 @@ function logHtml(e){const u=`<b>${esc(who(e.user))}</b>`,files=e.files||[],n=e.c
   case"restore":return `${u} restored ${esc(short(e.file))} to an earlier save`;
   case"joined":return `${u} started using RotLab`;case"sync_accept":return `${u} linked with ${esc(e.device)}`;case"updated":return `${u}'s RotLab updated to v${esc(e.version)}`}
  return null}
-function wsLogHtml(e){{const xh=xLogHtml(e);if(xh!==undefined)return xh}const u=`<b>${esc(who(e.user))}</b>`,r=W.requests.find(x=>x.rid===e.rid),rl=r?`<a data-ticket="${r.rid}">#${r.num} ${esc(r.title)}</a>`:"a request",pt=W.parts.find(x=>x.part===e.part);
+function wsLogHtml(e){{const xh=xLogHtml(e);if(xh!==undefined)return xh}const u=`${whoB(e.user)}`,r=W.requests.find(x=>x.rid===e.rid),rl=r?`<a data-ticket="${r.rid}">#${r.num} ${esc(r.title)}</a>`:"a request",pt=W.parts.find(x=>x.part===e.part);
  switch(e.kind){case"proj_new":return `${u} made a new project, <b>${esc(e.name)}</b>`;case"proj_set":return e.archived?`${u} archived ${esc(pname(e.pid))}`:e.name?`${u} renamed a project to <b>${esc(e.name)}</b>`:null;
   case"part_new":return `${u} added <b>${esc(e.name)}</b> to the outline`;
   case"part_set":if(e.stage!=null&&pt){const p=W.projects.find(x=>x.pid===pt.pid);return `${u} moved <b>${esc(pt.name)}</b> to ${esc(p?p.stages[e.stage]:e.stage)}`}return null;
@@ -735,7 +733,7 @@ function wsLogHtml(e){{const xh=xLogHtml(e);if(xh!==undefined)return xh}const u=
 function linkify(t){let h=esc(t);h=h.replace(/(^|\s)#(\d{1,4})\b/g,(m,s,n)=>{const r=W.requests.find(x=>x.pid===pid&&x.num===+n);return r?`${s}<a data-ticket="${r.rid}">#${n}</a>`:m});return emojify(h)}
 function renderFeed(scrollEnd){const box=$("feed"),atEnd=box.scrollHeight-box.scrollTop-box.clientHeight<30,rd=S.read||{};if(readAt===null)readAt=Math.min(rd.chat||0,rd.log||0);
  liveChats=liveChats.filter(l=>Date.now()/1000-l.ts<900&&!S.chat.some(m=>m.user===l.user&&m.text===l.text&&Math.abs(m.ts-l.ts)<600));
- let rows=S.chat.concat(liveChats).map(m=>({ts:m.ts,user:m.user,msg:true,_h:`<b>${esc(who(m.user))}</b>: ${linkify(m.text)}`}));
+ let rows=S.chat.concat(liveChats).map(m=>({ts:m.ts,user:m.user,msg:true,_h:`${whoB(m.user)}: ${linkify(m.text)}`}));
  if(!msgOnly)rows=rows.concat(S.log.map(e=>({ts:e.ts,user:e.user,id:e.id,_h:logHtml(e)})),W.events.map(e=>({ts:e.ts,user:e.user,_h:wsLogHtml(e)})));
  rows=rows.filter(e=>e._h).sort((a,b)=>a.ts-b.ts).slice(-300);
  let h="",last="",div=false,run=[];
@@ -930,7 +928,7 @@ let liveChats=[],typingUntil={},remoteCur={};
 const Live=makeLive({id:ME_ID,brokers:[],
  onstatus:()=>{if(S)renderStatus()},
  onconnect:()=>Live.send({t:"hi",u:S&&S.me}),
- onmessage:m=>{if(!S||m.u===S.me)return;if(bcOnLive(m))return;if(avOnLive(m))return;
+ onmessage:m=>{if(!S||m.u===S.me)return;if(stOnLive(m)||sfxOnLive(m))return;if(bcOnLive(m))return;if(avOnLive(m))return;
   if(m.t==="chat"){liveChats.push({ts:m.ts,user:m.u,text:m.text});typingUntil[m.u]=0;renderFeed(false);renderTyping();
    if(!focused&&window.Notification&&Notification.permission==="granted")new Notification("RotLab",{body:m.u+": "+m.text});lastSeenTs=Math.max(lastSeenTs||0,m.ts)}
   else if(m.t==="typing"){typingUntil[m.u]=Date.now()+4000;renderTyping()}
@@ -1018,7 +1016,7 @@ function taskDlg(tid){const t=X().tasks.find(x=>x.tid===tid);if(!t){closeDlg();r
  ${t.desc?`<div class="in" style="padding:6px 8px;white-space:pre-wrap">${esc(t.desc)}</div>`:""}
  ${t.reqs.length?`<div class="dim">Requirements</div><div class="in" style="padding:4px 8px">${t.reqs.map((r,i)=>`<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-treq="${i}" ${r.done?"checked":""}><span style="${r.done?"text-decoration:line-through;color:var(--dim)":""}">${esc(r.text)}</span>${r.done&&r.by?`<span class="dim" style="font-size:11px">${esc(who(r.by))}</span>`:""}</label>`).join("")}</div>`:""}
  <div style="display:flex;gap:6px;flex-wrap:wrap">${Object.entries(TST).map(([k,l])=>`<button class="btn sm ${t.status===k?"b":""}" data-tset="${k}">${l}</button>`).join("")}</div>
- <div class="dim">Comments</div><div class="in" style="max-height:200px;overflow:auto;padding:4px 8px">${t.thread.length?t.thread.map(x=>`<div><span class="dim" style="font-size:11px">${esc(dayName(x.ts))} ${esc(tm(x.ts))}</span> <b>${esc(who(x.user))}</b>${x.kind==="status"?` <span class="dim">set it to ${esc(TST[x.text]||x.text)}</span>`:": "+linkify(x.text)}</div>`).join(""):'<span class="dim">Nothing yet.</span>'}</div>
+ <div class="dim">Comments</div><div class="in" style="max-height:200px;overflow:auto;padding:4px 8px">${t.thread.length?t.thread.map(x=>`<div><span class="dim" style="font-size:11px">${esc(dayName(x.ts))} ${esc(tm(x.ts))}</span> ${whoB(x.user)}${x.kind==="status"?` <span class="dim">set it to ${esc(TST[x.text]||x.text)}</span>`:": "+linkify(x.text)}</div>`).join(""):'<span class="dim">Nothing yet.</span>'}</div>
  <div style="display:flex;gap:6px"><input id="tC" class="field" style="flex:1" placeholder="Write a comment"><button class="btn" data-emoopen="tC" title="Emoji" aria-label="Emoji">☺</button><button class="btn" id="tCs">Send</button></div>
  <div class="btns"><button class="btn" id="tDel">Delete</button><button class="btn" id="tEd">Edit...</button><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true,nofocus:true});
  const re=async(u,b)=>{try{await api(u,b);await tick();taskDlg(tid)}catch(e){toast(e.message)}};
@@ -1077,7 +1075,7 @@ function fbDlg(fid){const f=X().feedback.find(x=>x.fid===fid);if(!f){closeDlg();
  openDlg((f.type==="bug"?"Bug: ":"Suggestion: ")+f.title,`<div class="dim">${esc(who(f.by))} · ${esc(dayName(f.ts))} ${esc(tm(f.ts))} · ${f.votes.length} vote${f.votes.length===1?"":"s"}${f.votes.length?" ("+f.votes.map(v=>esc(who(v))).join(", ")+")":""}</div>
  ${f.text?`<div class="in" style="padding:6px 8px;white-space:pre-wrap;max-height:220px;overflow:auto">${esc(f.text)}</div>`:""}
  <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="dim">Status:</span>${Object.entries(FST).map(([k,l])=>`<button class="btn sm ${f.status===k?"b":""}" data-fst="${k}">${l}</button>`).join("")}</div>
- <div class="in" style="max-height:200px;overflow:auto;padding:4px 8px">${f.thread.length?f.thread.map(x=>`<div><span class="dim" style="font-size:11px">${esc(dayName(x.ts))} ${esc(tm(x.ts))}</span> <b>${esc(who(x.user))}</b>${x.kind==="status"?` <span class="dim">marked it ${esc(FST[x.text]||x.text)}</span>`:": "+linkify(x.text)}</div>`).join(""):'<span class="dim">No replies yet.</span>'}</div>
+ <div class="in" style="max-height:200px;overflow:auto;padding:4px 8px">${f.thread.length?f.thread.map(x=>`<div><span class="dim" style="font-size:11px">${esc(dayName(x.ts))} ${esc(tm(x.ts))}</span> ${whoB(x.user)}${x.kind==="status"?` <span class="dim">marked it ${esc(FST[x.text]||x.text)}</span>`:": "+linkify(x.text)}</div>`).join(""):'<span class="dim">No replies yet.</span>'}</div>
  <div style="display:flex;gap:6px"><input id="fbC" class="field" style="flex:1" placeholder="Reply"><button class="btn" data-emoopen="fbC" title="Emoji" aria-label="Emoji">☺</button><button class="btn" id="fbCs">Send</button></div>
  <div class="btns"><button class="btn" id="fbCopy">Copy as text</button>${f.by===S.me?'<button class="btn" id="fbDel">Delete</button>':""}<button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true,nofocus:true});
  const re=async b=>{try{await api("/api/x/fb_act",Object.assign({fid},b));await tick();fbDlg(fid)}catch(e){toast(e.message)}};
@@ -1101,7 +1099,7 @@ function radioPlayer(){radioPrefsInit();const a=$("radioAudio"),n=radioNow(),t=D
 function renderRadio(){if(!S||!S.configured)return;radioPrefsInit();const r=X().radio,n=radioNow(),nx=radioNext(),t=Date.now()/1000;
  let h=`<div style="display:flex;gap:4px;align-items:center"><b style="flex:1;white-space:nowrap">📻 RotRadio</b><button class="btn sm" id="raMute" title="${RA.muted?"Unmute":"Mute"} (only on this PC)" aria-label="${RA.muted?"Unmute":"Mute"}">${RA.muted?"🔇":"🔊"}</button><input id="raVol" type="range" min="0" max="1" step="0.05" value="${RA.vol}" style="width:70px" aria-label="Radio volume"></div>`;
  const sl=r.skips_left??3,again=r.skip_again?Math.max(1,Math.round((r.skip_again-t)/60)):0;
- const raBtns=`<div style="display:flex;gap:4px;margin-top:2px">${n?`<button class="btn sm" id="raSkip" ${sl?"":"disabled"} title="${sl?`Skip this song for everyone. You have ${sl} of ${r.skips_allowed||3} skips left (they come back 10 minutes after you use them)`:`No skips left. Next one in ${again} min`}">⏭ Skip <span class="dim">${sl}</span></button>`:""}<button class="btn sm" id="raBc" title="Hold to broadcast your microphone to everyone (or hold ${esc(bcKeyName(bcCfg().key))})" aria-label="Hold to broadcast">📢</button><button class="btn sm" id="raAdd" title="Add songs">+ Song</button><button class="btn sm" id="raTags" title="Choose which tags the radio plays">Tags</button><button class="btn sm" id="raList" title="All songs">Songs</button></div>`;
+ const raBtns=`<div style="display:flex;gap:4px;margin-top:2px">${n?`<button class="btn sm" id="raSkip" ${sl?"":"disabled"} title="${sl?`Skip this song for everyone. You have ${sl} of ${r.skips_allowed||3} skips left (they come back 10 minutes after you use them)`:`No skips left. Next one in ${again} min`}">⏭ Skip <span class="dim">${sl}</span></button>`:""}<button class="btn sm" id="raBc" title="Hold to broadcast your microphone to everyone (or hold ${esc(bcKeyName(bcCfg().key))})" aria-label="Hold to broadcast">📢</button><button class="btn sm" id="raSfx" title="Soundboard: play a sound for everyone">🎺</button><button class="btn sm" id="raAdd" title="Add songs (or drop music files on this box)">+ Song</button><button class="btn sm" id="raTags" title="Choose which tags the radio plays">Tags</button><button class="btn sm" id="raList" title="All songs">Songs</button></div>`;
  if(n){const p=Math.min(100,(t-n.start)/n.dur*100);
   h+=`<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(n.title)}"><b>${esc(n.title)}</b>${n.artist?` <span class="dim">· ${esc(n.artist)}</span>`:""}</div><div style="height:4px;background:#333;margin:2px 0"><div style="height:4px;width:${p.toFixed(1)}%;background:#7aa2ff"></div></div>
   <div class="dim" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${dur(t-n.start)} / ${dur(n.dur)} · from ${esc(who(n.by))} · ${n.tags.map(esc).join(", ")}${!n.here?" · <span style='color:#ffcf6a'>still syncing to this PC</span>":""}</div>${nx?`<div class="dim" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Next: ${esc(nx.title)}</div>`:""}`;
@@ -1113,35 +1111,11 @@ function renderRadio(){if(!S||!S.configured)return;radioPrefsInit();const r=X().
  if($("raSkip"))$("raSkip").onclick=async()=>{const cur=radioNow();if(!cur)return;$("raSkip").disabled=true;
   try{const res=await api("/api/x/radio_skip",{rid:cur.rid});toast(`Skipped ${cur.title}. ${res.left} skip${res.left===1?"":"s"} left.`);RA.cur=null;$("radioAudio").pause();await tick();renderRadio()}catch(e){toast(e.message);$("raSkip").disabled=false}};
  $("raBc").onmousedown=e=>{e.preventDefault();BC.btnDown=true;bcUpdate()};$("raBc").oncontextmenu=e=>{e.preventDefault();bcDlg()};
- $("raTags").onclick=radioTagsDlg;$("raAdd").onclick=radioAddDlg;$("raList").onclick=radioListDlg;if($("raTune"))$("raTune").onclick=()=>{RA.blocked=false;radioPlayer();renderRadio()}}
+ $("raTags").onclick=radioTagsDlg;$("raAdd").onclick=()=>radioAddDlg([]);$("raSfx").onclick=sfxDlg;$("raList").onclick=radioListDlg;if($("raTune"))$("raTune").onclick=()=>{RA.blocked=false;radioPlayer();renderRadio()}}
 document.addEventListener("click",()=>{if(RA.blocked){radioPlayer()}},true);
 setInterval(()=>{if(S&&S.configured){radioPlayer();renderRadio()}},1000);
 function audioDur(f){return new Promise(res=>{const a=new Audio(),u=URL.createObjectURL(f);a.preload="metadata";const done=v=>{URL.revokeObjectURL(u);res(v)};a.onloadedmetadata=()=>done(isFinite(a.duration)?a.duration:0);a.onerror=()=>done(0);setTimeout(()=>done(0),15000);a.src=u})}
 let raFiles=[];
-function radioAddDlg(){raFiles=[];const known=Object.keys(X().radio.tags).sort();
- openDlg("Add songs to RotRadio",`<div class="dim">Pick music files (mp3, m4a, ogg, wav, flac...). Every song needs <b>at least 3 tags</b>: they decide when the radio plays it. Songs are shared with everyone you sync with. (Audio files tagged <b>Music</b> in Files play on the radio too.)</div>
- <div style="display:flex;gap:6px;align-items:center"><button class="btn" id="raPick">Choose files...</button><input type="file" id="raFile" accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac,.webm" multiple style="display:none"><span class="dim" id="raCount">No files chosen</span></div>
- <label class="dim" for="raAllTags">Tags for all of them (comma separated), added to each song's own tags</label><input id="raAllTags" class="field" style="width:100%" placeholder="e.g. chill, lofi, background">
- ${known.length?`<div class="chips" id="raKnown">${known.map(g=>`<button class="chip" data-tg="${esc(g)}">${esc(g)}</button>`).join("")}</div>`:""}
- <div class="in" id="raRows" style="max-height:40vh;overflow:auto;padding:4px"></div><div id="raProg" class="dim"></div>
- <div class="btns"><button class="btn b" id="raUp" disabled>Add to RotRadio</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`,{wide:true});
- $("raPick").onclick=()=>$("raFile").click();
- if($("raKnown"))$("raKnown").querySelectorAll("[data-tg]").forEach(b=>b.onclick=()=>{const cur=$("raAllTags").value.split(",").map(s=>s.trim()).filter(Boolean);if(!cur.includes(b.dataset.tg))cur.push(b.dataset.tg);$("raAllTags").value=cur.join(", ");raCheck()});
- $("raAllTags").oninput=raCheck;
- $("raFile").onchange=async()=>{const fs=[...$("raFile").files];raFiles=[];$("raCount").textContent="Reading "+fs.length+" file(s)...";
-  for(const f of fs){raFiles.push({f,dur:await audioDur(f),title:f.name.replace(/\.[^.]+$/,"").replace(/[_]+/g," ")})}
-  $("raCount").textContent=raFiles.length+" file(s)";
-  $("raRows").innerHTML=`<table><thead><tr><th>Title</th><th>Artist</th><th>Its own tags</th><th>Length</th></tr></thead><tbody>${raFiles.map((r,i)=>`<tr><td><input class="field raT" data-i="${i}" value="${esc(r.title)}" style="width:100%"></td><td><input class="field raA" data-i="${i}" style="width:100%"></td><td><input class="field raG" data-i="${i}" style="width:100%" placeholder="comma separated"><div class="dim raN" data-i="${i}" style="font-size:11px"></div></td><td>${r.dur?dur(r.dur):'<span style="color:#ff8a8a">can\'t read</span>'}</td></tr>`).join("")}</tbody></table>`;
-  document.querySelectorAll(".raG").forEach(x=>x.oninput=raCheck);raCheck()};
- $("raUp").onclick=raUpload}
-const raTagsOf=i=>{const own=(document.querySelector(`.raG[data-i="${i}"]`)||{}).value||"";return [...new Set((own+","+$("raAllTags").value).split(",").map(s=>s.trim().toLowerCase()).filter(Boolean))]};
-function raCheck(){let ok=raFiles.length>0;raFiles.forEach((r,i)=>{const n=raTagsOf(i).length,el=document.querySelector(`.raN[data-i="${i}"]`);if(el){el.textContent=n>=3?n+" tags ✓":"needs "+(3-n)+" more tag"+(3-n>1?"s":"");el.style.color=n>=3?"#7fd18f":"#ffb27a"}if(n<3||!r.dur)ok=false});$("raUp").disabled=!ok}
-async function raUpload(){$("raUp").disabled=true;let done=0;
- for(let i=0;i<raFiles.length;i++){const r=raFiles[i];$("raProg").textContent=`Uploading ${i+1} of ${raFiles.length}: ${r.f.name}`;
-  try{const saved=await upOne(r.f,X().radio.folder||"_hub/radio/music","","","",null);
-   await api("/api/x/radio_add",{file:saved,title:document.querySelector(`.raT[data-i="${i}"]`).value,artist:document.querySelector(`.raA[data-i="${i}"]`).value,tags:raTagsOf(i),dur:r.dur});done++}
-  catch(e){toast(r.f.name+": "+e.message)}}
- closeDlg();toast(`Added ${done} song${done===1?"":"s"}. New songs join the radio in about a minute.`);tick()}
 /* ---- cameras & screen sharing (peer to peer; set up through the encrypted live layer) ---- */
 const AV_MAX_CAMS=3,AV_ICE=[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.google.com:19302"},{urls:"stun:stun.cloudflare.com:3478"}];
 const AV={mine:new Map(),peers:new Map(),remote:new Map(),streams:new Map(),open:LS.get("av_open",true),big:null,lastSent:0};
@@ -1279,7 +1253,7 @@ function calViewDlg(cid){const c=X().cal.find(x=>x.cid===cid);if(!c){closeDlg();
  openDlg(c.title,`<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap"><b style="font-size:16px">${esc(c.title)}</b><span class="tag">${n<0&&(!c.end||daysTo(c.end)<0)?"past":n===0?"today":n===1?"tomorrow":n>0?"in "+n+" days":"on now"}</span></div>
  <div>📅 ${esc(when)}</div><div class="dim" style="font-size:12px">Added by ${esc(who(c.by))}, ${esc(dayName(c.ts).toLowerCase())}</div>
  ${c.notes?`<div class="in" style="padding:6px 8px;white-space:pre-wrap">${linkify(c.notes)}</div>`:""}
- <div class="dim">Notes</div><div class="in" id="cvThread" style="max-height:240px;overflow:auto;padding:4px 8px">${c.thread.length?c.thread.map(x=>`<div style="margin-bottom:3px"><span class="dim" style="font-size:11px">${esc(dayName(x.ts))} ${esc(tm(x.ts))}</span> <b>${esc(who(x.user))}</b>: <span style="white-space:pre-wrap">${linkify(x.text)}</span></div>`).join(""):'<span class="dim">No notes yet. Write what to bring, who\'s coming, addresses...</span>'}</div>
+ <div class="dim">Notes</div><div class="in" id="cvThread" style="max-height:240px;overflow:auto;padding:4px 8px">${c.thread.length?c.thread.map(x=>`<div style="margin-bottom:3px"><span class="dim" style="font-size:11px">${esc(dayName(x.ts))} ${esc(tm(x.ts))}</span> ${whoB(x.user)}: <span style="white-space:pre-wrap">${linkify(x.text)}</span></div>`).join(""):'<span class="dim">No notes yet. Write what to bring, who\'s coming, addresses...</span>'}</div>
  <textarea id="cvNote" class="field" rows="2" style="width:100%" placeholder="Write a note (Ctrl+Enter to add)"></textarea>
  <div class="btns"><button class="btn" data-emoopen="cvNote" title="Emoji" aria-label="Emoji">☺</button><button class="btn b" id="cvAdd">Add note</button><button class="btn" id="cvEdit">Edit event...</button><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true,nofocus:true});
  const th=$("cvThread");th.scrollTop=th.scrollHeight;
@@ -1373,7 +1347,7 @@ function songEditDlg(rid){const t=X().radio.tracks.find(x=>x.rid===rid);if(!t)re
  $("seDel").onclick=async()=>{if(!confirm("Take "+t.title+" off RotRadio for everyone?"+(lib?"":" (The file stays in _hub\\radio\\music.)")))return;try{await api("/api/x/radio_track_set",{rid,removed:true});await tick();radioListDlg()}catch(e){toast(e.message)}}}
 
 /* ---- feed lines for everything people do in the extras ---- */
-function xLogHtml(e){const u=`<b>${esc(who(e.user))}</b>`,x=X();const t=x.tasks.find(y=>y.tid===e.tid),tl=t?`<a data-task="${esc(t.tid)}">${esc(t.title)}</a>`:"a task";
+function xLogHtml(e){const u=`${whoB(e.user)}`,x=X();const t=x.tasks.find(y=>y.tid===e.tid),tl=t?`<a data-task="${esc(t.tid)}">${esc(t.title)}</a>`:"a task";
  const c=x.cal.find(y=>y.cid===e.cid),cl=c?`<a data-calev="${esc(c.cid)}">${esc(c.title)}</a>`:"an event";
  const it=x.items.find(y=>y.iid===e.iid),f=x.feedback.find(y=>y.fid===e.fid),fl=f?`<a data-fb="${esc(f.fid)}">${esc(f.title)}</a>`:"a post";
  const tr=(x.radio.tracks||[]).find(y=>y.rid===e.rid);
@@ -1392,10 +1366,11 @@ function xLogHtml(e){const u=`<b>${esc(who(e.user))}</b>`,x=X();const t=x.tasks.
  case"fb_comment":return `${u} replied to ${fl}: “${emojify(esc(e.text))}”`;
  case"radio_track":return `${u} added <b>${esc(e.title)}</b> to RotRadio`;
  case"radio_track_set":{const nm=tr?`<b>${esc(tr.title)}</b>`:"a song";return e.removed?`${u} took ${nm} off RotRadio`:e.title?`${u} renamed a song to <b>${esc(e.title)}</b>`:`${u} changed the tags on ${nm}`}
+ case"sfx_new":return `${u} added a sound to the soundboard: <b>${esc((e.emoji?e.emoji+" ":"")+e.name)}</b>`;
  case"radio_skip":return `${u} skipped <b>${esc(e.title||"a song")}</b> on RotRadio`;
  case"radio_cfg":return `${u} changed which tags RotRadio plays${(e.blocked||[]).length?" ("+e.blocked.length+" blocked)":""}`;
  case"radio_groups":return (e.groups||[]).length?`${u}'s AI sorted the radio tags into ${e.groups.length} groups`:null}
- if(/^(task_|cal_|inv_|fb_|radio_)/.test(e.kind||""))return null;return undefined}
+ if(/^(task_|cal_|inv_|fb_|radio_|sfx_|user_color)/.test(e.kind||""))return null;return undefined}
 document.addEventListener("click",e=>{const a=e.target.closest("#feed [data-calev]");if(!a)return;e.preventDefault();calViewDlg(a.dataset.calev)});
 
 /* ---- radio mute/volume remembered on this PC (also saved in RotLab's settings, not just the window) ---- */
@@ -1434,7 +1409,7 @@ document.addEventListener("mouseup",()=>{if(BC.btnDown){BC.btnDown=false;bcUpdat
 let bcPollSeq=-1;setInterval(async()=>{if(!S||!bcCfg().global)return;try{const r=await api("/api/x/ptt",{});if(r.seq===bcPollSeq)return;bcPollSeq=r.seq;
  if(bcCfg().mode==="toggle"){if(r.down)BC.toggled=!BC.toggled}else BC.glbDown=r.down;bcUpdate()}catch(e){}},120);
 /* music dips while anyone (including you) is broadcasting */
-setInterval(()=>{const target=(BC.talking||bcOthers().length)?bcCfg().duck??0.2:1;BC.duck+=(target-BC.duck)*(target<BC.duck?0.5:0.15);if(Math.abs(target-BC.duck)<0.01)BC.duck=target;
+setInterval(()=>{const target=(BC.talking||bcOthers().length||SFX.playing)?bcCfg().duck??0.2:1;BC.duck+=(target-BC.duck)*(target<BC.duck?0.5:0.15);if(Math.abs(target-BC.duck)<0.01)BC.duck=target;
  const a=$("radioAudio");if(a)a.volume=Math.max(0,Math.min(1,RA.vol*BC.duck))},80);
 /* play other people's broadcasts */
 function bcRenderAudio(){const want=new Map();for(const [id,r] of avFresh())for(const s of r.streams)if(s.kind==="voice"){const got=AV.streams.get(s.sid);if(got)want.set(s.sid,got.stream)}
@@ -1444,7 +1419,8 @@ function bcRenderAudio(){const want=new Map();for(const [id,r] of avFresh())for(
 function renderBcBadge(){let b=$("bcBadge");if(!b){b=document.createElement("div");b.id="bcBadge";b.className="out";document.body.appendChild(b)}
  const others=bcOthers().map(h=>who(h.u));
  if(BC.talking){b.innerHTML=`<span class="bcDot"></span> <b>You're broadcasting</b> <span class="dim">${bcCfg().mode==="toggle"?"(press "+esc(bcKeyName(bcCfg().key))+" to stop)":"(let go of "+esc(bcKeyName(bcCfg().key))+" to stop)"}</span>`;b.style.display="flex"}
- else if(others.length){b.innerHTML=`<span class="bcDot"></span> <b>${esc(others.join(", "))}</b>&nbsp;${others.length>1?"are":"is"} broadcasting`;b.style.display="flex"}
+ else if(others.length){b.innerHTML=`<span class="bcDot"></span> ${others.map(o=>`<b>${esc(o)}</b>`).join(", ")}&nbsp;${others.length>1?"are":"is"} broadcasting`;b.style.display="flex"}
+ else if(SFX.heard.some(x=>Date.now()-x.at<3000)){const x=SFX.heard.filter(x=>Date.now()-x.at<3000).pop();b.innerHTML=`🎺 ${whoB(x.u)}: ${esc(x.name)}`;b.style.display="flex";SFX.heard=SFX.heard.filter(y=>Date.now()-y.at<3000)}
  else b.style.display="none"}
 setInterval(()=>{bcRenderAudio();renderBcBadge()},700);
 function bcDlg(){const c=bcCfg();
@@ -1461,6 +1437,112 @@ function bcDlg(){const c=bcCfg();
    if(Date.now()-t0>3000){clearInterval(iv);s.getTracks().forEach(t=>t.stop());ctx.close();$("bcTest").disabled=false;$("bcTest").textContent=peak>10?"✓ Microphone works":"Didn't hear anything";}},100)}catch(e){toast("Couldn't use the microphone: "+e.message)}};
  $("bcOk").onclick=async()=>{try{await api("/api/x/bc_set",{key:$("bcK").value,mode:document.querySelector("[name=bcM]:checked").value,global:$("bcG").checked,duck:+$("bcD").value});closeDlg();await tick();toast("Broadcast: "+(document.querySelector("[name=bcM]:checked").value==="toggle"?"press ":"hold ")+bcKeyName($("bcK").value))}catch(e){toast(e.message)}}}
 
+/* ---- name colours ---- */
+const NAME_COLORS=["#7aa2ff","#ff8a8a","#7fd18f","#ffcf6a","#c49bff","#5fd4d4","#ff9ad5","#ffad66","#a4d65e","#9ab3c9"];
+function userColor(u){const c=S&&S.x&&S.x.colors&&S.x.colors[u];if(c)return c;let h=0;for(const ch of String(u||""))h=(h*31+ch.charCodeAt(0))>>>0;return NAME_COLORS[h%NAME_COLORS.length]}
+const whoB=u=>`<b style="color:${userColor(u)}">${esc(who(u))}</b>`;
+function colorDlg(){const cur=userColor(S.me),mine=S.x.colors&&S.x.colors[S.me];
+ openDlg("My name colour",`<div class="dim">Your name shows in this colour for everyone: in the chat, the feed, the people list and tasks.</div>
+ <div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">${NAME_COLORS.concat(["#ffffff","#ff5555","#55ff99","#ffee55","#55aaff","#ff77ff"]).map(c=>`<button class="colSw" data-c="${c}" title="${c}" aria-label="Colour ${c}" style="width:28px;height:28px;border:2px solid ${c===cur?"#fff":"#444"};background:${c};cursor:pointer"></button>`).join("")}</div>
+ <label class="dim" for="colPick">Or any colour:</label> <input type="color" id="colPick" value="${cur}">
+ <div style="margin-top:8px">Preview: <span id="colPrev" style="font-weight:bold;color:${cur}">${esc(S.me)}</span></div>
+ <div class="btns">${mine?'<button class="btn" id="colReset">Back to automatic</button>':""}<button class="btn b" id="colOk">Save</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
+ let pick=cur;const set=c=>{pick=c;$("colPick").value=c;$("colPrev").style.color=c;document.querySelectorAll(".colSw").forEach(b=>b.style.borderColor=b.dataset.c===c?"#fff":"#444")};
+ document.querySelectorAll(".colSw").forEach(b=>b.onclick=()=>set(b.dataset.c));$("colPick").oninput=()=>set($("colPick").value);
+ $("colOk").onclick=async()=>{try{await api("/api/x/color",{color:pick});closeDlg();await tick();renderAll&&renderAll()}catch(e){toast(e.message)}};
+ if($("colReset"))$("colReset").onclick=async()=>{await api("/api/x/color",{color:""});closeDlg();await tick()}}
+
+/* ---- status shared instantly over Live (the presence file still syncs as a fallback) ---- */
+const liveSt=new Map();let myStSeq=-1,myStLast=0;
+setInterval(async()=>{if(!S||!S.me)return;try{const r=await api("/api/x/mystatus",{});const changed=r.seq!==myStSeq;
+ if(changed||Date.now()-myStLast>15000){myStSeq=r.seq;myStLast=Date.now();if(r.status){S.myStatus=r.status;if(Live.status==="on")Live.send({t:"status",u:S.me,status:r.status})}if(changed)renderPeople()}}catch(e){}},1000);
+function stOnLive(m){if(m.t!=="status")return false;liveSt.set(m.u,{status:m.status,at:Date.now()});renderPeople();return true}
+function peopleWithLive(){const ppl=(S.people||[]).map(p=>{const l=liveSt.get(p.user);return l&&Date.now()-l.at<45000&&p.live!=="offline"?Object.assign({},p,{live:l.status.kind,status:l.status}):p});
+ const meP=ppl.find(p=>p.user===S.me);if(meP&&S.myStatus)Object.assign(meP,{live:S.myStatus.kind,status:S.myStatus});return ppl}
+
+/* ---- people list: colours, AFK button, click your name for your colour ---- */
+function renderPeople(){const ppl=peopleWithLive().sort((a,b)=>(a.user===S.me)-(b.user===S.me));if(!ppl.some(p=>p.user===S.me))ppl.push({user:S.me,live:S.myStatus?S.myStatus.kind:"hub",status:S.myStatus||{text:"here"}});
+ const afk=!!(S.x&&S.x.afk);
+ const h=ppl.map(p=>{const isMe=p.user===S.me;return `<div style="display:flex;gap:8px;align-items:center"><span class="dot ${p.live}"></span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${isMe?`<a data-mycolor title="Change my name colour" style="text-decoration:none">${whoB(p.user)}</a>`:whoB(p.user)}${p.live==="offline"?'<span class="dim">: offline'+(p.ts?", seen "+esc(dayName(p.ts).toLowerCase())+" "+esc(tm(p.ts)):"")+"</span>":": "+esc(p.status.text||p.live)}</span>${isMe?`<button class="btn sm ${afk?"b":""}" data-afk title="${afk?"You're AFK. Click when you're back":"Show everyone you're away from the keyboard"}" style="min-height:17px;padding:0 6px">${afk?"Back":"AFK"}</button>`:""}</div>`}).join("");
+ const box=$("people");if(box._h!==h){box.innerHTML=h;box._h=h;const c=box.querySelector("[data-mycolor]");if(c)c.onclick=colorDlg;const a=box.querySelector("[data-afk]");
+  if(a)a.onclick=async()=>{try{const r=await api("/api/x/afk",{on:!afk});S.x.afk=r.afk;const st={kind:r.afk?"away":"hub",text:r.afk?"AFK":"browsing the hub"};S.myStatus=st;if(Live.status==="on")Live.send({t:"status",u:S.me,status:st});renderPeople();toast(r.afk?"You're AFK":"Welcome back")}catch(e){toast(e.message)}}}}
+
+/* ---- soundboard: everyone hears it, the radio dips while it plays ---- */
+const SFX={playing:0,last:0,heard:[]};
+function sfxSounds(){return (S&&S.x&&S.x.sounds)||[]}
+function sfxPlayLocal(s,from){if(RA.muted)return;const a=new Audio("/media?path="+encodeURIComponent(s.file));a.volume=Math.min(1,Math.max(0.15,RA.vol));SFX.playing++;
+ const done=()=>{SFX.playing=Math.max(0,SFX.playing-1)};a.onended=done;a.onerror=done;setTimeout(done,(s.dur||5)*1000+1500);a.play().catch(done);
+ SFX.heard.push({u:from,name:s.name,at:Date.now()});renderBcBadge()}
+async function sfxPlay(sid){const s=sfxSounds().find(x=>x.sid===sid);if(!s)return;if(Date.now()-SFX.last<1500)return toast("Wait a moment between sounds");
+ if(Live.status!=="on")return toast("The soundboard needs Live to be connected (bottom right).");SFX.last=Date.now();Live.send({t:"sfx",u:S.me,sid});if(!s.here)return toast("That sound hasn't synced to this PC yet");sfxPlayLocal(s,S.me)}
+function sfxOnLive(m){if(m.t!=="sfx")return false;const s=sfxSounds().find(x=>x.sid===m.sid);if(s&&s.here)sfxPlayLocal(s,m.u);return true}
+function sfxDlg(){const ss=sfxSounds();
+ openDlg("Soundboard",`<div class="dim">Click a sound and everyone hears it, with the radio dipping while it plays. Muting the radio mutes sounds too.</div>
+ <div data-drop="sfx" id="sfGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;max-height:50vh;overflow:auto;padding:6px;border:1px dashed #444;min-height:70px">${ss.length?ss.map(s=>`<button class="btn" data-sfx="${esc(s.sid)}" title="${esc(s.name)} · ${dur(s.dur)} · from ${esc(who(s.by))}${s.here?"":" (still syncing)"}" style="height:46px;white-space:normal;line-height:1.15;${s.here?"":"opacity:.5"}">${s.emoji?esc(s.emoji)+" ":""}${esc(s.name)}</button>`).join(""):'<div class="dim" style="grid-column:1/-1;text-align:center;padding:14px">No sounds yet. Drop sound files here or use + Add sounds.</div>'}</div>
+ <div class="btns"><button class="btn" id="sfEdit">Manage...</button><button class="btn b" id="sfAdd">+ Add sounds</button><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true});
+ document.querySelectorAll("[data-sfx]").forEach(b=>b.onclick=()=>sfxPlay(b.dataset.sfx));$("sfAdd").onclick=()=>sfxAddDlg([]);$("sfEdit").onclick=sfxManageDlg;
+ dropZone($("sfGrid"),fs=>sfxAddDlg(fs))}
+let sfFiles=[];
+function sfxAddDlg(files){sfFiles=[];
+ openDlg("Add sounds",`<div class="dim">Short sounds (up to 30 seconds): mp3, m4a, ogg, wav... Drop files here or choose them. They're shared with everyone you sync with.</div>
+ <div data-drop="sfx" id="sfDrop" style="border:2px dashed #555;padding:12px;text-align:center;cursor:pointer">Drop sound files here, or <u>click to choose</u></div><input type="file" id="sfFile" accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac,.webm" multiple style="display:none">
+ <div class="in" id="sfRows" style="max-height:40vh;overflow:auto;padding:4px"></div>
+ <div class="btns"><button class="btn b" id="sfUp" disabled>Add to the soundboard</button><button class="btn" id="sfBack">Back</button></div>`,{wide:true});
+ const add=async fs=>{for(const f of fs){if(!/^audio\/|\.(mp3|m4a|aac|ogg|opus|wav|flac|webm)$/i.test(f.type+" "+f.name))continue;sfFiles.push({f,dur:await audioDur(f),name:f.name.replace(/\.[^.]+$/,"").replace(/[_]+/g," ").slice(0,40)})}draw()};
+ const draw=()=>{$("sfRows").innerHTML=sfFiles.length?`<table><thead><tr><th>Emoji</th><th>Name</th><th>Length</th><th></th></tr></thead><tbody>${sfFiles.map((r,i)=>`<tr><td><input class="field sfE" data-i="${i}" style="width:44px" maxlength="4" placeholder="🔊"></td><td><input class="field sfN" data-i="${i}" value="${esc(r.name)}" maxlength="40" style="width:100%"></td><td>${!r.dur?'<span style="color:#ff8a8a">can\'t read</span>':r.dur>30?`<span style="color:#ff8a8a">${dur(r.dur)} (too long)</span>`:dur(r.dur)}</td><td><button class="btn sm" data-sfrm="${i}">✕</button></td></tr>`).join("")}</tbody></table>`:'<div class="dim">No files yet.</div>';
+  document.querySelectorAll("[data-sfrm]").forEach(b=>b.onclick=()=>{sfFiles.splice(+b.dataset.sfrm,1);draw()});$("sfUp").disabled=!sfFiles.some(r=>r.dur>0&&r.dur<=30)};
+ $("sfDrop").onclick=()=>$("sfFile").click();$("sfFile").onchange=()=>add([...$("sfFile").files]);dropZone($("sfDrop"),add);$("sfBack").onclick=sfxDlg;
+ $("sfUp").onclick=async()=>{$("sfUp").disabled=true;let n=0;for(let i=0;i<sfFiles.length;i++){const r=sfFiles[i];if(!(r.dur>0&&r.dur<=30))continue;$("sfUp").textContent=`Uploading ${i+1}/${sfFiles.length}...`;
+  try{const saved=await upOne(r.f,"_hub/radio/sounds","","","",null);await api("/api/x/sfx_add",{file:saved,dur:r.dur,name:document.querySelector(`.sfN[data-i="${i}"]`).value,emoji:document.querySelector(`.sfE[data-i="${i}"]`).value});n++}catch(e){toast(r.f.name+": "+e.message)}}
+  await tick();toast(`Added ${n} sound${n===1?"":"s"}`);sfxDlg()};
+ draw();if(files&&files.length)add(files)}
+function sfxManageDlg(){const ss=sfxSounds();
+ openDlg("Manage sounds",`<div class="in" style="max-height:55vh;overflow:auto"><table><thead><tr><th>Emoji</th><th>Name</th><th>Length</th><th>Added by</th><th></th></tr></thead><tbody>${ss.map(s=>`<tr><td><input class="field smE" data-sid="${esc(s.sid)}" value="${esc(s.emoji)}" maxlength="4" style="width:44px"></td><td><input class="field smN" data-sid="${esc(s.sid)}" value="${esc(s.name)}" maxlength="40" style="width:100%"></td><td>${dur(s.dur)}</td><td>${whoB(s.by)}</td><td><button class="btn sm" data-smdel="${esc(s.sid)}">Remove</button></td></tr>`).join("")||'<tr><td colspan="5" class="dim">No sounds.</td></tr>'}</tbody></table></div>
+ <div class="btns"><button class="btn b" id="smSave">Save names</button><button class="btn" id="smBack">Back</button></div>`,{wide:true});
+ $("smBack").onclick=sfxDlg;document.querySelectorAll("[data-smdel]").forEach(b=>b.onclick=async()=>{if(!confirm("Remove this sound for everyone?"))return;await api("/api/x/sfx_set",{sid:b.dataset.smdel,removed:true});await tick();sfxManageDlg()});
+ $("smSave").onclick=async()=>{for(const s of ss){const n=document.querySelector(`.smN[data-sid="${s.sid}"]`).value.trim(),e=document.querySelector(`.smE[data-sid="${s.sid}"]`).value.trim();if(n!==s.name||e!==(s.emoji||""))await api("/api/x/sfx_set",{sid:s.sid,name:n,emoji:e}).catch(er=>toast(er.message))}await tick();toast("Saved");sfxDlg()}}
+
+/* ---- drag and drop onto dialogs (keeps the window's own "add files" drop from taking over) ---- */
+function dropZone(el,onFiles){if(!el)return;el.dataset.drop=el.dataset.drop||"1";
+ el.ondragover=e=>{e.preventDefault();e.stopPropagation();el.style.outline="2px solid #7aa2ff"};el.ondragleave=()=>el.style.outline="";
+ el.ondrop=e=>{e.preventDefault();e.stopPropagation();el.style.outline="";dragN=0;$("dropzone").classList.remove("show");const fs=[...(e.dataTransfer?.files||[])];if(fs.length)onFiles(fs)}}
+
+/* ---- add songs: drag and drop, many at once, tag the ticked ones in bulk ---- */
+function radioAddDlg(files){raFiles=[];const known=Object.keys(X().radio.tags).sort();
+ openDlg("Add songs to RotRadio",`<div class="dim">Every song needs <b>at least 3 tags</b>. Tick the songs you want, type tags and press <b>Add to ticked</b> to tag them all at once (shift-click a box to tick a range). You can also edit each song's tags on its own.</div>
+ <div data-drop="songs" id="raDrop" style="border:2px dashed #555;padding:12px;text-align:center;cursor:pointer">Drop music files here, or <u>click to choose</u> <span class="dim">(mp3, m4a, ogg, wav, flac...)</span></div><input type="file" id="raFile" accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac,.webm" multiple style="display:none">
+ <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="dim" id="raCount">No songs yet</span><span style="flex:1"></span><button class="btn sm" id="raSelAll">Tick all</button><button class="btn sm" id="raSelNone">Untick all</button><button class="btn sm" id="raSelInv">Invert</button></div>
+ <div style="display:flex;gap:6px"><input id="raBulk" class="field" style="flex:1" placeholder="Tags for the ticked songs, e.g. chill, lofi, background"><button class="btn" id="raBulkAdd">Add to ticked</button><button class="btn" id="raBulkRm" title="Remove these tags from the ticked songs">Remove</button></div>
+ ${known.length?`<div class="chips" id="raKnown" style="max-height:52px;overflow:auto">${known.map(g=>`<button class="chip" data-tg="${esc(g)}">${esc(g)}</button>`).join("")}</div>`:""}
+ <div class="in" id="raRows" style="max-height:38vh;overflow:auto;padding:4px"></div><div id="raProg" class="dim"></div>
+ <div class="btns"><button class="btn b" id="raUp" disabled>Add to RotRadio</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`,{wide:true});
+ let lastI=null;
+ const tagsOf=i=>[...new Set((document.querySelector(`.raG[data-i="${i}"]`)||{value:""}).value.split(",").map(s=>s.trim().toLowerCase()).filter(Boolean))];
+ const keep=()=>raFiles.forEach((r,i)=>{const g=document.querySelector(`.raG[data-i="${i}"]`);if(g){r.tags=g.value;r.title=document.querySelector(`.raT[data-i="${i}"]`).value;r.artist=document.querySelector(`.raA[data-i="${i}"]`).value;r.sel=document.querySelector(`.raS[data-i="${i}"]`).checked}});
+ const check=()=>{let ok=raFiles.length>0,bad=0;raFiles.forEach((r,i)=>{const n=tagsOf(i).length,el=document.querySelector(`.raN[data-i="${i}"]`);if(el){el.textContent=n>=3?n+" tags ✓":"needs "+(3-n)+" more";el.style.color=n>=3?"#7fd18f":"#ffb27a"}if(n<3||!r.dur){ok=false;bad++}});
+  $("raUp").disabled=!ok;const sel=raFiles.filter((r,i)=>(document.querySelector(`.raS[data-i="${i}"]`)||{}).checked).length;$("raCount").textContent=raFiles.length?`${raFiles.length} song${raFiles.length>1?"s":""} · ${sel} ticked${bad?` · ${bad} still need tags`:" · all ready"}`:"No songs yet"};
+ const draw=()=>{$("raRows").innerHTML=raFiles.length?`<table><thead><tr><th></th><th>Title</th><th>Artist</th><th>Tags</th><th>Length</th><th></th></tr></thead><tbody>${raFiles.map((r,i)=>`<tr><td><input type="checkbox" class="raS" data-i="${i}" ${r.sel!==false?"checked":""} aria-label="Tick ${esc(r.title)}"></td><td><input class="field raT" data-i="${i}" value="${esc(r.title)}" style="width:100%"></td><td><input class="field raA" data-i="${i}" value="${esc(r.artist||"")}" style="width:100%"></td><td><input class="field raG" data-i="${i}" value="${esc(r.tags||"")}" style="width:100%" placeholder="comma separated"><div class="dim raN" data-i="${i}" style="font-size:11px"></div></td><td>${r.dur?dur(r.dur):'<span style="color:#ff8a8a">can\'t read</span>'}</td><td><button class="btn sm" data-rarm="${i}" aria-label="Remove">✕</button></td></tr>`).join("")}</tbody></table>`:"";
+  document.querySelectorAll(".raG").forEach(x=>x.oninput=check);
+  document.querySelectorAll(".raS").forEach(c=>c.onclick=e=>{const i=+c.dataset.i;if(e.shiftKey&&lastI!==null){const [a,b]=[Math.min(lastI,i),Math.max(lastI,i)];for(let k=a;k<=b;k++)document.querySelector(`.raS[data-i="${k}"]`).checked=c.checked}lastI=i;check()});
+  document.querySelectorAll("[data-rarm]").forEach(b=>b.onclick=()=>{keep();raFiles.splice(+b.dataset.rarm,1);draw()});check()};
+ const add=async fs=>{keep();const before=raFiles.length;$("raCount").textContent="Reading "+fs.length+" file(s)...";
+  for(const f of fs){if(!/^audio\/|\.(mp3|m4a|aac|ogg|opus|wav|flac|webm)$/i.test(f.type+" "+f.name))continue;raFiles.push({f,dur:await audioDur(f),title:f.name.replace(/\.[^.]+$/,"").replace(/[_]+/g," "),tags:"",sel:true})}
+  if(raFiles.length===before)toast("Those weren't music files");draw()};
+ const bulk=(addIt)=>{const tg=$("raBulk").value.split(",").map(s=>s.trim().toLowerCase()).filter(Boolean);if(!tg.length)return toast("Type some tags first");let n=0;
+  raFiles.forEach((r,i)=>{if(!document.querySelector(`.raS[data-i="${i}"]`).checked)return;const g=document.querySelector(`.raG[data-i="${i}"]`);let cur=tagsOf(i);cur=addIt?[...new Set([...cur,...tg])]:cur.filter(t=>!tg.includes(t));g.value=cur.join(", ");n++});
+  if(!n)return toast("Tick some songs first");check();toast((addIt?"Tagged ":"Removed tags from ")+n+" song"+(n>1?"s":""))};
+ $("raDrop").onclick=()=>$("raFile").click();$("raFile").onchange=()=>add([...$("raFile").files]);dropZone($("raDrop"),add);dropZone($("raRows"),add);
+ $("raBulkAdd").onclick=()=>bulk(true);$("raBulkRm").onclick=()=>bulk(false);$("raBulk").onkeydown=e=>{if(e.key==="Enter")bulk(true)};
+ $("raSelAll").onclick=()=>{document.querySelectorAll(".raS").forEach(c=>c.checked=true);check()};$("raSelNone").onclick=()=>{document.querySelectorAll(".raS").forEach(c=>c.checked=false);check()};
+ $("raSelInv").onclick=()=>{document.querySelectorAll(".raS").forEach(c=>c.checked=!c.checked);check()};
+ if($("raKnown"))$("raKnown").querySelectorAll("[data-tg]").forEach(b=>b.onclick=()=>{const cur=$("raBulk").value.split(",").map(s=>s.trim()).filter(Boolean);if(!cur.includes(b.dataset.tg))cur.push(b.dataset.tg);$("raBulk").value=cur.join(", ")});
+ $("raUp").onclick=async()=>{keep();$("raUp").disabled=true;let done=0;
+  for(let i=0;i<raFiles.length;i++){const r=raFiles[i];$("raProg").textContent=`Uploading ${i+1} of ${raFiles.length}: ${r.f.name}`;
+   try{const saved=await upOne(r.f,X().radio.folder||"_hub/radio/music","","","",null);await api("/api/x/radio_add",{file:saved,title:r.title,artist:r.artist,tags:r.tags.split(","),dur:r.dur});done++}catch(e){toast(r.f.name+": "+e.message)}}
+  closeDlg();toast(`Added ${done} song${done===1?"":"s"}. New songs join the radio in about a minute.`);tick()};
+ draw();if(files&&files.length)add(files)}
+
+setTimeout(()=>dropZone($("radio"),fs=>radioAddDlg(fs)),0);
 /* ---------------- main loop ---------------- */
 function renderAll(force){if(!S||!S.configured)return;renderProjects();renderForYou();renderTabs();renderCenter(force);renderPeople();renderStatus();renderFeed(false);renderBanners();renderRadio();renderAV();
  if(openTicket&&dlgOpen()){const r=W.requests.find(x=>x.rid===openTicket);if(r){const ta=$("tkText"),sig=JSON.stringify([r.thread.length,r.status]);if(!(ta&&ta.value)&&!tkFiles.length&&$("dlgBody")._sig!==sig)ticketDlg(r.rid)}}}
