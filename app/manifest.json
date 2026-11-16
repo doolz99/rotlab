@@ -1,5 +1,5 @@
 {
- "version": "5.3",
+ "version": "5.4",
  "files": [
   "ui.html",
   "phone.html",
@@ -9,5 +9,5 @@
   "README.md",
   "hub.py"
  ],
- "notes": "Back to how RotLab was before today: the Tasks, Calendar, Inventory, Feedback, RotRadio and Call features are removed again."
+ "notes": "RotLab 5.4: Tasks, Calendar, Inventory, Bugs & suggestions, RotRadio, and cameras (up to 3) and screen sharing are back. RotLab now gets its updates from github.com/normanbatesbmotel-boop/rotlab."
 }

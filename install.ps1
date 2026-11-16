@@ -1,6 +1,6 @@
 # RotLab one-line installer
 #   Paste this into PowerShell:
-#     irm https://raw.githubusercontent.com/doolz99/rotlab/main/install.ps1 | iex
+#     irm https://raw.githubusercontent.com/normanbatesbmotel-boop/rotlab/main/install.ps1 | iex
 #
 # It downloads a tested RotLab version (the tag below) into this PC's own app folder
 # (%LOCALAPPDATA%\RotLab\app, outside the synced project folder, so nobody you sync with can change the
@@ -11,7 +11,7 @@
 $ErrorActionPreference = 'Stop'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$version = 'cea14f3746632c812d127da4aac02b97206c584c'  # RotLab 5.3 (a fixed, tested commit)
+$version = '3c3d7cef6421b307d4c83b3a14ea13a722fd96ff'  # RotLab 5.4 (a fixed, tested commit)
 $project = if ($env:ROTLAB_DIR) { $env:ROTLAB_DIR } else { 'C:\VegasProject' }
 $app     = Join-Path $env:LOCALAPPDATA 'RotLab\app'
 $env:ROTLAB_ROOT = $project
@@ -27,7 +27,7 @@ $zip = Join-Path $env:TEMP 'rotlab-main.zip'
 $tmp = Join-Path $env:TEMP ('rotlab-' + [guid]::NewGuid().ToString('N'))
 
 Write-Host '  Downloading RotLab...'
-Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/doolz99/rotlab/archive/$version.zip" -OutFile $zip
+Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/normanbatesbmotel-boop/rotlab/archive/$version.zip" -OutFile $zip
 
 Write-Host '  Unpacking...'
 Expand-Archive -Path $zip -DestinationPath $tmp -Force

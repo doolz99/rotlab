@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "5.3"
+HUB_VERSION = "5.4"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -600,7 +600,7 @@ def make_invite_file():
         "echo   Just type your name when the setup window asks, and click Install.",
         "echo.",
         'set "ROTLAB_INVITE=%s"' % code,
-        'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/doolz99/rotlab/main/install.ps1 | iex"',
+        'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/normanbatesbmotel-boop/rotlab/main/install.ps1 | iex"',
         "if errorlevel 1 pause",
         ""])
     folder = os.path.join(os.path.expanduser("~"), "Downloads")
@@ -2549,7 +2549,7 @@ def storage_state():
 # Openverse: Creative Commons images + audio (no key).  Poly Haven: CC0 HDRIs, textures, models (no key).
 OPENVERSE = os.environ.get("HUB_OPENVERSE", "https://api.openverse.org/v1")
 POLYHAVEN = os.environ.get("HUB_POLYHAVEN", "https://api.polyhaven.com")
-WEB_UA = "RotLab/%s (+https://github.com/doolz99/rotlab)" % HUB_VERSION
+WEB_UA = "RotLab/%s (+https://github.com/normanbatesbmotel-boop/rotlab)" % HUB_VERSION
 PIXABAY = os.environ.get("HUB_PIXABAY", "https://pixabay.com/api")
 GIPHY = os.environ.get("HUB_GIPHY", "https://api.giphy.com/v1")
 WEB_CACHE = {}  # url -> (ts, data); Pixabay asks for results to be cached for 24 hours
@@ -2921,7 +2921,7 @@ def restart(with_window, script=None):
 # Every few hours, look at the app's GitHub repo. If it has a newer version, download it to a staging
 # folder on this PC and say so; nothing is installed until you click Install. (Sync never carries the
 # program between PCs.)
-GITHUB_RAW = os.environ.get("HUB_GH_RAW", "https://raw.githubusercontent.com/doolz99/rotlab/main/app/")
+GITHUB_RAW = os.environ.get("HUB_GH_RAW", "https://raw.githubusercontent.com/normanbatesbmotel-boop/rotlab/main/app/")
 GH = {"checked": 0, "latest": None, "error": None, "busy": False}
 STAGE_DIR = os.path.join(os.path.dirname(config_file()), "update")
 
@@ -3049,6 +3049,11 @@ def monitor():
                     last_written, last_presence_write = status, now()
             if tick % 20 == 5:
                 threading.Thread(target=github_check, daemon=True).start()
+            if tick % 2 == 1:
+                try:
+                    radio_tick()
+                except Exception as e:
+                    print("radio:", repr(e))
             if tick % 6 == 0:
                 check_for_update()  # only tells you; you choose when to install
             if tick % 10 == 4:
@@ -3106,6 +3111,466 @@ def invite_tick():
             print("accepted", p.get("name"))
         except Exception as e:
             print("auto-accept:", repr(e))
+
+
+# ================================================================ EXTRAS (RotLab fork 5.0)
+# Tasks, calendar, inventory, feedback and RotRadio. Same idea as the workspace above: every change is
+# one small event appended to this person's own file in _hub/ws/, and the state is rebuilt by replaying
+# everyone's events. Cameras and screen sharing need nothing here: they run in the window, peer to peer.
+X_CACHE = {"sig": None, "state": None}
+RADIO_DIR = os.path.join(HUB_DIR, "radio")
+RADIO_MUSIC = os.path.join(RADIO_DIR, "music")
+RADIO_EXT = {".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm"}
+RADIO_SETTLE = 45      # seconds a new track waits before it can be picked (so it has synced to the other PCs)
+RADIO_AHEAD = 150      # the DJ PC keeps this many seconds of schedule ahead
+TASK_STATUS = ["todo", "doing", "done", "cancelled"]
+X_QUIET = {"part_set", "task_req", "task_del", "cal_set", "inv_loc_new", "inv_loc_set", "inv_item_set", "fb_status",
+           "fb_comment", "fb_vote", "fb_del", "radio_track_set"}
+FB_STATUS = ["open", "planned", "done", "wontfix"]
+for _d in (RADIO_DIR, RADIO_MUSIC):
+    os.makedirs(_d, exist_ok=True)
+
+
+def _txt(v, n=200):
+    return str(v if v is not None else "").strip()[:n]
+
+
+def _date(v):
+    v = _txt(v, 10)
+    return v if re.match(r"^\d{4}-\d{2}-\d{2}$", v) else ""
+
+
+def _time(v):
+    v = _txt(v, 5)
+    return v if re.match(r"^\d{2}:\d{2}$", v) else ""
+
+
+def _tags(v, limit=20):
+    out = []
+    for t in (v if isinstance(v, list) else re.split(r"[,;]", str(v or ""))):
+        t = re.sub(r"\s+", " ", str(t)).strip().lower()[:30]
+        if t and t not in out:
+            out.append(t)
+    return out[:limit]
+
+
+def _people(v):
+    out = []
+    for p in (v if isinstance(v, list) else []):
+        p = _txt(p, 40)
+        if p and p not in out:
+            out.append(p)
+    return out[:20]
+
+
+def x_state():
+    sig = _ws_sig()
+    with WS_LOCK:
+        if X_CACHE["sig"] == sig and X_CACHE["state"] is not None:
+            return X_CACHE["state"]
+    tasks, cal, locs, items, fb, tracks = {}, {}, {}, {}, {}, {}
+    radio_cfg = {"disabled": [], "by": None, "ts": 0}
+    for e in ws_events():
+        k, u, ts = e.get("kind") or "", e.get("user"), e.get("ts", 0)
+        if not k.startswith(("task_", "cal_", "inv_", "fb_", "radio_")):
+            continue
+        if k == "task_new" and e.get("tid") and e["tid"] not in tasks:
+            tasks[e["tid"]] = {"tid": e["tid"], "title": e.get("title", "Task"), "desc": e.get("desc", ""),
+                               "reqs": [{"text": r, "done": False} for r in e.get("reqs", [])],
+                               "due": e.get("due", ""), "due_time": e.get("due_time", ""), "prio": e.get("prio", "normal"),
+                               "assignees": e.get("assignees", []), "pid": e.get("pid") or "", "status": "todo",
+                               "by": u, "ts": ts, "last": ts, "thread": [], "deleted": False}
+        elif k.startswith("task_") and e.get("tid") in tasks:
+            t = tasks[e["tid"]]
+            t["last"] = ts
+            if k == "task_set":
+                for f in ("title", "desc", "due", "due_time", "prio", "assignees", "pid", "status"):
+                    if f in e:
+                        t[f] = e[f]
+                if "reqs" in e:  # edited list: keep ticks of lines that stayed the same
+                    old = {r["text"]: r["done"] for r in t["reqs"]}
+                    t["reqs"] = [{"text": r, "done": old.get(r, False)} for r in e["reqs"]]
+                if "status" in e:
+                    t["thread"].append({"kind": "status", "user": u, "ts": ts, "text": e["status"]})
+            elif k == "task_req" and isinstance(e.get("i"), int) and 0 <= e["i"] < len(t["reqs"]):
+                t["reqs"][e["i"]]["done"] = bool(e.get("done"))
+                t["reqs"][e["i"]]["by"] = u
+            elif k == "task_comment":
+                t["thread"].append({"kind": "comment", "user": u, "ts": ts, "text": e.get("text", "")})
+            elif k == "task_del":
+                t["deleted"] = True
+        elif k == "cal_new" and e.get("cid"):
+            cal[e["cid"]] = {"cid": e["cid"], "title": e.get("title", "Event"), "date": e.get("date", ""),
+                             "end": e.get("end", ""), "time": e.get("time", ""), "notes": e.get("notes", ""),
+                             "by": u, "ts": ts, "deleted": False}
+        elif k == "cal_set" and e.get("cid") in cal:
+            for f in ("title", "date", "end", "time", "notes", "deleted"):
+                if f in e:
+                    cal[e["cid"]][f] = e[f]
+        elif k == "inv_loc_new" and e.get("lid"):
+            locs[e["lid"]] = {"lid": e["lid"], "name": e.get("name", "Place"), "notes": e.get("notes", ""),
+                              "by": u, "ts": ts, "deleted": False}
+        elif k == "inv_loc_set" and e.get("lid") in locs:
+            for f in ("name", "notes", "deleted"):
+                if f in e:
+                    locs[e["lid"]][f] = e[f]
+        elif k == "inv_item_new" and e.get("iid"):
+            items[e["iid"]] = {"iid": e["iid"], "name": e.get("name", "Item"), "qty": e.get("qty", 1),
+                               "loc": e.get("loc", ""), "owner": e.get("owner", ""), "cat": e.get("cat", ""),
+                               "notes": e.get("notes", ""), "by": u, "ts": ts, "moved": ts, "moved_by": u, "deleted": False}
+        elif k == "inv_item_set" and e.get("iid") in items:
+            it = items[e["iid"]]
+            if "loc" in e and e["loc"] != it["loc"]:
+                it["moved"], it["moved_by"] = ts, u
+            for f in ("name", "qty", "loc", "owner", "cat", "notes", "deleted"):
+                if f in e:
+                    it[f] = e[f]
+        elif k == "fb_new" and e.get("fid"):
+            fb[e["fid"]] = {"fid": e["fid"], "type": e.get("type", "suggestion"), "title": e.get("title", ""),
+                            "text": e.get("text", ""), "status": "open", "by": u, "ts": ts, "last": ts,
+                            "votes": [u], "thread": [], "deleted": False}
+        elif k.startswith("fb_") and e.get("fid") in fb:
+            f_ = fb[e["fid"]]
+            f_["last"] = ts
+            if k == "fb_status":
+                f_["status"] = e.get("status", f_["status"])
+                f_["thread"].append({"kind": "status", "user": u, "ts": ts, "text": f_["status"]})
+            elif k == "fb_comment":
+                f_["thread"].append({"kind": "comment", "user": u, "ts": ts, "text": e.get("text", "")})
+            elif k == "fb_vote":
+                if e.get("value", True) and u not in f_["votes"]:
+                    f_["votes"].append(u)
+                elif not e.get("value", True) and u in f_["votes"]:
+                    f_["votes"].remove(u)
+            elif k == "fb_del":
+                f_["deleted"] = True
+        elif k == "radio_track" and e.get("rid") and e.get("file"):
+            tracks[e["rid"]] = {"rid": e["rid"], "file": e["file"], "title": e.get("title") or os.path.basename(e["file"]),
+                                "artist": e.get("artist", ""), "tags": e.get("tags", []), "dur": float(e.get("dur") or 0),
+                                "by": u, "ts": ts, "removed": False}
+        elif k == "radio_track_set" and e.get("rid") in tracks:
+            for f in ("title", "artist", "tags", "removed"):
+                if f in e:
+                    tracks[e["rid"]][f] = e[f]
+        elif k == "radio_cfg":
+            radio_cfg = {"disabled": e.get("disabled", []), "by": u, "ts": ts}
+    state = {"tasks": {k: v for k, v in tasks.items() if not v["deleted"]},
+             "cal": {k: v for k, v in cal.items() if not v["deleted"]},
+             "locs": {k: v for k, v in locs.items() if not v["deleted"]},
+             "items": {k: v for k, v in items.items() if not v["deleted"]},
+             "feedback": {k: v for k, v in fb.items() if not v["deleted"]},
+             "tracks": {k: v for k, v in tracks.items() if not v["removed"]},
+             "radio_cfg": radio_cfg}
+    with WS_LOCK:
+        X_CACHE["sig"], X_CACHE["state"] = sig, state
+    return state
+
+
+# ---- RotRadio
+# One PC is the DJ: whoever comes first alphabetically among the people online. It writes the play list
+# (which track starts when) to _hub/radio/schedule-<name>.json; every window plays the same track at the same
+# second, using the PC clocks. Each PC mutes on its own.
+RADIO = {"recent": [], "cfg_sig": None}
+
+
+def radio_tags(st_=None):
+    st_ = st_ or x_state()
+    counts = {}
+    for t in st_["tracks"].values():
+        for g in t["tags"]:
+            counts[g] = counts.get(g, 0) + 1
+    return counts
+
+
+def radio_eligible(st_):
+    disabled = set(st_["radio_cfg"]["disabled"])
+    out = []
+    for t in st_["tracks"].values():
+        if t["dur"] < 5 or now() - t["ts"] < RADIO_SETTLE:
+            continue
+        if not any(g not in disabled for g in t["tags"]):
+            continue
+        try:
+            if not os.path.isfile(safe_path(t["file"])):
+                continue
+        except ValueError:
+            continue
+        out.append(t)
+    return out
+
+
+RADIO_MIN_VERSION = (5, 0)
+
+
+def radio_dj():
+    """Who makes the play list: the first (alphabetically) of the people online whose RotLab has RotRadio."""
+    ppl = {p["user"] for p in read_presence() if p["live"] != "offline" and _vtuple(p.get("version") or "0") >= RADIO_MIN_VERSION}
+    ppl = sorted(ppl | ({me()} if me() else set()), key=str.lower)
+    return ppl[0] if ppl else None
+
+
+def radio_schedules():
+    out = []
+    for fn in os.listdir(RADIO_DIR):
+        if fn.startswith("schedule-") and fn.endswith(".json") and not is_temp(fn):
+            s = read_json(os.path.join(RADIO_DIR, fn))
+            if s and isinstance(s.get("queue"), list):
+                out.append(s)
+    return out
+
+
+def radio_current_schedule():
+    """The play list everyone follows: the DJ's, or the newest one if the DJ's hasn't arrived yet."""
+    ss = [s for s in radio_schedules() if now() - s.get("ts", 0) < 300]
+    dj = radio_dj()
+    mine = [s for s in ss if s.get("user") == dj and now() - s.get("ts", 0) < 75]
+    pool = mine or ss
+    return max(pool, key=lambda s: s.get("ts", 0)) if pool else None
+
+
+def radio_tick():
+    if not me():
+        return
+    base = radio_current_schedule()
+    if radio_dj() != me():
+        # stand in when the DJ's play list has gone quiet (their PC asleep, an old RotLab, still syncing...)
+        if base and now() - base.get("ts", 0) < 75:
+            return
+    st_ = x_state()
+    path = os.path.join(RADIO_DIR, "schedule-%s.json" % slug(me()))
+    cur = read_json(path, {}) or {}
+    base = base or cur
+    queue = [q for q in (base.get("queue") or []) if q.get("start", 0) + q.get("dur", 0) > now()]
+    elig = radio_eligible(st_)
+    ids = {t["rid"] for t in elig}
+    cfg_sig = hashlib.md5(json.dumps([sorted(st_["radio_cfg"]["disabled"]), sorted(ids)]).encode()).hexdigest()
+    changed = False
+    if cfg_sig != RADIO["cfg_sig"]:
+        # tags or tracks changed: keep the song that's playing, choose the rest again
+        if RADIO["cfg_sig"] is not None:
+            keep = [q for q in queue if q["start"] <= now()][:1]
+            if len(keep) != len(queue):
+                queue, changed = keep, True
+            if queue and queue[0]["rid"] not in ids and queue[0]["rid"] not in st_["tracks"]:
+                queue, changed = [], True
+        RADIO["cfg_sig"] = cfg_sig
+    import random
+    recent = [q["rid"] for q in queue] + RADIO["recent"]
+    end = max([q["start"] + q["dur"] for q in queue] + [now() + 1])
+    while elig and end < now() + RADIO_AHEAD:
+        avoid = set(recent[:max(0, min(len(elig) - 1, 6))])
+        pick = random.choice([t for t in elig if t["rid"] not in avoid] or elig)
+        queue.append({"rid": pick["rid"], "file": pick["file"], "title": pick["title"], "artist": pick.get("artist", ""),
+                      "tags": pick["tags"], "by": pick["by"], "start": round(end, 2), "dur": pick["dur"]})
+        recent.insert(0, pick["rid"])
+        end += pick["dur"] + 1.5
+        changed = True
+    RADIO["recent"] = recent[:10]
+    if changed or now() - cur.get("ts", 0) > 30 or cur.get("queue") != queue:
+        write_json_atomic(path, {"user": me(), "ts": now(), "queue": queue})
+        quick_scan("_hub/radio")
+
+
+def radio_view():
+    st_ = x_state()
+    s = radio_current_schedule()
+    q = [dict(x) for x in (s or {}).get("queue", []) if x.get("start", 0) + x.get("dur", 0) > now() - 2]
+    for x in q:
+        try:
+            x["here"] = os.path.isfile(safe_path(x["file"]))
+        except ValueError:
+            x["here"] = False
+    tracks = [dict(t) for t in sorted(st_["tracks"].values(), key=lambda t: -t["ts"])]
+    for t in tracks:
+        try:
+            t["here"] = os.path.isfile(safe_path(t["file"]))
+        except ValueError:
+            t["here"] = False
+    return {"queue": q[:6], "dj": radio_dj(), "tags": radio_tags(st_), "disabled": st_["radio_cfg"]["disabled"],
+            "cfg_by": st_["radio_cfg"]["by"], "tracks": tracks, "playable": len(radio_eligible(st_)),
+            "folder": rel(RADIO_MUSIC)}
+
+
+def x_view():
+    st_ = x_state()
+    return {"tasks": sorted(st_["tasks"].values(), key=lambda t: (t["due"] or "9999", t["ts"])),
+            "cal": sorted(st_["cal"].values(), key=lambda c: (c["date"], c["time"])),
+            "locs": sorted(st_["locs"].values(), key=lambda l: l["name"].lower()),
+            "items": sorted(st_["items"].values(), key=lambda i: i["name"].lower()),
+            "feedback": sorted(st_["feedback"].values(), key=lambda f: -f["ts"]),
+            "radio": radio_view(),
+            "people": sorted({p["user"] for p in read_presence()} | ({me()} if me() else set()), key=str.lower),
+            "task_status": TASK_STATUS, "fb_status": FB_STATUS}
+
+
+def x_post(path, b):
+    """Endpoints for the extras. Returns (code, obj) or None if not ours."""
+    if not path.startswith("/api/x/"):
+        return None
+    p = path[7:]
+    st_ = x_state()
+    if p == "task_new":
+        title = _txt(b.get("title"), 120)
+        if not title:
+            raise ValueError("Give the task a title")
+        tid = uuid.uuid4().hex[:10]
+        ws_add("task_new", tid=tid, title=title, desc=_txt(b.get("desc"), 4000),
+               reqs=[_txt(r, 300) for r in (b.get("reqs") or []) if _txt(r, 300)][:40],
+               due=_date(b.get("due")), due_time=_time(b.get("due_time")),
+               prio=b.get("prio") if b.get("prio") in ("low", "normal", "high", "urgent") else "normal",
+               assignees=_people(b.get("assignees")), pid=_txt(b.get("pid"), 40))
+        return 200, {"ok": True, "tid": tid}
+    if p == "task_set":
+        tid = b.get("tid")
+        if tid not in st_["tasks"]:
+            raise ValueError("That task is gone")
+        d = {}
+        if "title" in b:
+            d["title"] = _txt(b["title"], 120) or "Task"
+        if "desc" in b:
+            d["desc"] = _txt(b["desc"], 4000)
+        if "reqs" in b:
+            d["reqs"] = [_txt(r, 300) for r in (b.get("reqs") or []) if _txt(r, 300)][:40]
+        if "due" in b:
+            d["due"] = _date(b["due"])
+        if "due_time" in b:
+            d["due_time"] = _time(b["due_time"])
+        if b.get("prio") in ("low", "normal", "high", "urgent"):
+            d["prio"] = b["prio"]
+        if "assignees" in b:
+            d["assignees"] = _people(b["assignees"])
+        if "pid" in b:
+            d["pid"] = _txt(b["pid"], 40)
+        if b.get("status") in TASK_STATUS:
+            d["status"] = b["status"]
+        ws_add("task_set", tid=tid, **d)
+        return 200, {"ok": True}
+    if p == "task_req":
+        ws_add("task_req", tid=b.get("tid"), i=int(b.get("i", -1)), done=bool(b.get("done")))
+        return 200, {"ok": True}
+    if p == "task_comment":
+        text = _txt(b.get("text"), 2000)
+        if text:
+            ws_add("task_comment", tid=b.get("tid"), text=text)
+        return 200, {"ok": True}
+    if p == "task_del":
+        ws_add("task_del", tid=b.get("tid"))
+        return 200, {"ok": True}
+    if p == "cal_new":
+        date = _date(b.get("date"))
+        if not date or not _txt(b.get("title")):
+            raise ValueError("An event needs a title and a date")
+        cid = uuid.uuid4().hex[:10]
+        end = _date(b.get("end"))
+        ws_add("cal_new", cid=cid, title=_txt(b.get("title"), 120), date=date, end=end if end > date else "",
+               time=_time(b.get("time")), notes=_txt(b.get("notes"), 2000))
+        return 200, {"ok": True, "cid": cid}
+    if p == "cal_set":
+        d = {}
+        for f, fn in (("title", lambda v: _txt(v, 120)), ("date", _date), ("end", _date), ("time", _time),
+                      ("notes", lambda v: _txt(v, 2000))):
+            if f in b:
+                d[f] = fn(b[f])
+        if b.get("deleted"):
+            d["deleted"] = True
+        ws_add("cal_set", cid=b.get("cid"), **d)
+        return 200, {"ok": True}
+    if p == "loc_new":
+        name = _txt(b.get("name"), 80)
+        if not name:
+            raise ValueError("Name the place")
+        if any(l["name"].lower() == name.lower() for l in st_["locs"].values()):
+            raise ValueError("There's already a place called " + name)
+        lid = uuid.uuid4().hex[:10]
+        ws_add("inv_loc_new", lid=lid, name=name, notes=_txt(b.get("notes"), 500))
+        return 200, {"ok": True, "lid": lid}
+    if p == "loc_set":
+        lid = b.get("lid")
+        d = {}
+        if "name" in b:
+            d["name"] = _txt(b["name"], 80) or "Place"
+        if "notes" in b:
+            d["notes"] = _txt(b["notes"], 500)
+        if b.get("deleted"):
+            if any(i["loc"] == lid for i in st_["items"].values()):
+                raise ValueError("Move or delete the things in this place first")
+            d["deleted"] = True
+        ws_add("inv_loc_set", lid=lid, **d)
+        return 200, {"ok": True}
+    if p == "item_new":
+        name = _txt(b.get("name"), 120)
+        if not name:
+            raise ValueError("Name the item")
+        iid = uuid.uuid4().hex[:10]
+        ws_add("inv_item_new", iid=iid, name=name, qty=max(0, int(b.get("qty") or 1)), loc=_txt(b.get("loc"), 20),
+               owner=_txt(b.get("owner"), 40), cat=_txt(b.get("cat"), 40), notes=_txt(b.get("notes"), 1000))
+        return 200, {"ok": True, "iid": iid}
+    if p == "item_set":
+        d = {}
+        for f in ("name", "loc", "owner", "cat", "notes"):
+            if f in b:
+                d[f] = _txt(b[f], 1000 if f == "notes" else 120)
+        if "qty" in b:
+            d["qty"] = max(0, int(b.get("qty") or 0))
+        if b.get("deleted"):
+            d["deleted"] = True
+        ws_add("inv_item_set", iid=b.get("iid"), **d)
+        return 200, {"ok": True}
+    if p == "fb_new":
+        title = _txt(b.get("title"), 120)
+        if not title:
+            raise ValueError("Give it a short title")
+        fid = uuid.uuid4().hex[:10]
+        ws_add("fb_new", fid=fid, type="bug" if b.get("type") == "bug" else "suggestion", title=title,
+               text=_txt(b.get("text"), 4000))
+        return 200, {"ok": True, "fid": fid}
+    if p == "fb_act":
+        a, fid = b.get("act"), b.get("fid")
+        if a == "status" and b.get("status") in FB_STATUS:
+            ws_add("fb_status", fid=fid, status=b["status"])
+        elif a == "comment" and _txt(b.get("text")):
+            ws_add("fb_comment", fid=fid, text=_txt(b.get("text"), 2000))
+        elif a == "vote":
+            ws_add("fb_vote", fid=fid, value=bool(b.get("value", True)))
+        elif a == "delete":
+            ws_add("fb_del", fid=fid)
+        return 200, {"ok": True}
+    if p == "radio_add":
+        f = _txt(b.get("file"), 400)
+        full = safe_path(f)
+        if not f.startswith(rel(RADIO_MUSIC) + "/") or not os.path.isfile(full):
+            raise ValueError("Upload the music file first")
+        if os.path.splitext(f)[1].lower() not in RADIO_EXT:
+            raise ValueError("RotRadio plays mp3, m4a, aac, ogg, opus, wav, flac and webm files")
+        tags = _tags(b.get("tags"))
+        if len(tags) < 3:
+            raise ValueError("Give each song at least 3 tags")
+        dur = float(b.get("dur") or 0)
+        if not 5 <= dur <= 4 * 3600:
+            raise ValueError("Couldn't read how long that song is")
+        rid = uuid.uuid4().hex[:10]
+        ws_add("radio_track", rid=rid, file=f, title=_txt(b.get("title"), 120) or os.path.splitext(os.path.basename(f))[0],
+               artist=_txt(b.get("artist"), 120), tags=tags, dur=round(dur, 2))
+        return 200, {"ok": True, "rid": rid}
+    if p == "radio_track_set":
+        rid = b.get("rid")
+        d = {}
+        if "tags" in b:
+            tags = _tags(b["tags"])
+            if len(tags) < 3:
+                raise ValueError("A song needs at least 3 tags")
+            d["tags"] = tags
+        for f in ("title", "artist"):
+            if f in b:
+                d[f] = _txt(b[f], 120)
+        if b.get("removed"):
+            d["removed"] = True
+        ws_add("radio_track_set", rid=rid, **d)
+        return 200, {"ok": True}
+    if p == "radio_cfg":
+        ws_add("radio_cfg", disabled=_tags(b.get("disabled"), 500))
+        return 200, {"ok": True}
+    return 404, {"error": "unknown"}
 
 
 # ---------------------------------------------------------------- API
@@ -3178,7 +3643,7 @@ def build_state():
     rd = CONFIG.get("read") or {}
     unread_chat = sum(1 for m in chat if m.get("user") != me() and m.get("ts", 0) > rd.get("chat", 0))
     wsv = ws_view()
-    unread_log = sum(1 for e in log + [x for x in wsv["events"] if x.get("kind") not in ("part_set",)]
+    unread_log = sum(1 for e in log + [x for x in wsv["events"] if x.get("kind") not in X_QUIET]
                      if e.get("user") != me() and e.get("ts", 0) > rd.get("log", 0))
     mine_reqs = sum(1 for r in wsv["requests"] if r["status"] in ("open", "working", "review") and
                     ((r["status"] == "review" and r["by"] == me()) or
@@ -3204,7 +3669,7 @@ def build_state():
                      "autostart": get_autostart(), "windows": os.name == "nt",
                      "native_window": has_native_window(), "folders": CONFIG.get("folders"),
                      "github_updates": CONFIG.get("github_updates", True), "live": CONFIG.get("live", True), "storage": storage_default()},
-        "live": live_info(),
+        "live": live_info(), "x": x_view(),
         "storage": storage_state(),
         "github": {"latest": GH["latest"], "error": GH["error"], "checked": GH["checked"], "busy": GH["busy"]},
     }
@@ -3257,6 +3722,9 @@ def handle_post(path, body):
         return 400, {"error": "not set up"}
 
     r = ws_post(path, body)
+    if r is not None:
+        return r
+    r = x_post(path, body)
     if r is not None:
         return r
     if path == "/api/library":
