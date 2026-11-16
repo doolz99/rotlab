@@ -1,5 +1,5 @@
 {
- "version": "5.6",
+ "version": "5.7",
  "files": [
   "ui.html",
   "phone.html",
@@ -20,5 +20,5 @@
   "emoji-angry.webp",
   "hub.py"
  ],
- "notes": "Block radio tags so songs with them never play. Audio files tagged Music in Files play on the radio. 11 animated emojis in chat, comments and notes. Calendar notes and other changes now show in the feed. Optional: show which program you're using (File > Show what I'm doing, off by default)."
+ "notes": "RotRadio: Skip button (3 skips each per 10 minutes); tag boxes now go on → off → blocked with one click each. Fixed the grin emoji's see-through forehead."
 }

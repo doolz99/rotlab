@@ -97,6 +97,9 @@ td.nm{max-width:300px;overflow:hidden;text-overflow:ellipsis}
 .dot{width:9px;height:9px;border:1px solid #000;display:inline-block;flex:none;background:#555}
 .dot.editing{background:#b48cff}.dot.away{background:#d9a52a}
 .emo{height:22px;vertical-align:middle;margin:-3px 1px}
+.tri{width:15px;height:15px;flex:none;padding:0;border:1px solid #9a9a9a;background:var(--field);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:11px;line-height:1;vertical-align:middle;color:#fff}
+.tri[data-st="on"]{background:#3a6ea5;border-color:#6fa0d8}.tri[data-st="on"]::after{content:"✓"}
+.tri[data-st="bl"]{background:#8a2020;border-color:#d05050}.tri[data-st="bl"]::after{content:"⊘";font-size:12px}
 #emoPick{position:fixed;z-index:80;display:grid;grid-template-columns:repeat(6,42px);gap:2px;padding:4px}
 .emoBtn{background:none;border:0;cursor:pointer;padding:3px;height:42px;display:flex;align-items:center;justify-content:center}
 .emoBtn img{height:34px}.emoBtn:hover{background:var(--sel)}.dot.hub,.dot.online{background:#3fbf6a}
@@ -1093,7 +1096,8 @@ function radioPlayer(){const a=$("radioAudio"),n=radioNow(),t=Date.now()/1000;a.
  if(a.paused)a.play().then(()=>{RA.blocked=false}).catch(()=>{RA.blocked=true;renderRadio()})}
 function renderRadio(){if(!S||!S.configured)return;const r=X().radio,n=radioNow(),nx=radioNext(),t=Date.now()/1000;
  let h=`<div style="display:flex;gap:4px;align-items:center"><b style="flex:1;white-space:nowrap">📻 RotRadio</b><button class="btn sm" id="raMute" title="${RA.muted?"Unmute":"Mute"} (only on this PC)" aria-label="${RA.muted?"Unmute":"Mute"}">${RA.muted?"🔇":"🔊"}</button><input id="raVol" type="range" min="0" max="1" step="0.05" value="${RA.vol}" style="width:70px" aria-label="Radio volume"></div>`;
- const raBtns=`<div style="display:flex;gap:4px;margin-top:2px"><button class="btn sm" id="raAdd" title="Add songs">+ Song</button><button class="btn sm" id="raTags" title="Choose which tags the radio plays">Tags</button><button class="btn sm" id="raList" title="All songs">Songs</button></div>`;
+ const sl=r.skips_left??3,again=r.skip_again?Math.max(1,Math.round((r.skip_again-t)/60)):0;
+ const raBtns=`<div style="display:flex;gap:4px;margin-top:2px">${n?`<button class="btn sm" id="raSkip" ${sl?"":"disabled"} title="${sl?`Skip this song for everyone. You have ${sl} of ${r.skips_allowed||3} skips left (they come back 10 minutes after you use them)`:`No skips left. Next one in ${again} min`}">⏭ Skip <span class="dim">${sl}</span></button>`:""}<button class="btn sm" id="raAdd" title="Add songs">+ Song</button><button class="btn sm" id="raTags" title="Choose which tags the radio plays">Tags</button><button class="btn sm" id="raList" title="All songs">Songs</button></div>`;
  if(n){const p=Math.min(100,(t-n.start)/n.dur*100);
   h+=`<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(n.title)}"><b>${esc(n.title)}</b>${n.artist?` <span class="dim">· ${esc(n.artist)}</span>`:""}</div><div style="height:4px;background:#333;margin:2px 0"><div style="height:4px;width:${p.toFixed(1)}%;background:#7aa2ff"></div></div>
   <div class="dim" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${dur(t-n.start)} / ${dur(n.dur)} · from ${esc(who(n.by))} · ${n.tags.map(esc).join(", ")}${!n.here?" · <span style='color:#ffcf6a'>still syncing to this PC</span>":""}</div>${nx?`<div class="dim" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Next: ${esc(nx.title)}</div>`:""}`;
@@ -1102,6 +1106,8 @@ function renderRadio(){if(!S||!S.configured)return;const r=X().radio,n=radioNow(
  h+=raBtns;const box=$("radio");if(box._h===h)return;const vf=document.activeElement&&document.activeElement.id==="raVol";if(vf)return;box.innerHTML=h;box._h=h;
  $("raMute").onclick=()=>{RA.muted=!RA.muted;LS.set("radio_muted",RA.muted);RA.unlocked=true;radioPlayer();renderRadio()};
  $("raVol").oninput=e=>{RA.vol=+e.target.value;LS.set("radio_vol",RA.vol);$("radioAudio").volume=RA.vol};
+ if($("raSkip"))$("raSkip").onclick=async()=>{const cur=radioNow();if(!cur)return;$("raSkip").disabled=true;
+  try{const res=await api("/api/x/radio_skip",{rid:cur.rid});toast(`Skipped ${cur.title}. ${res.left} skip${res.left===1?"":"s"} left.`);RA.cur=null;$("radioAudio").pause();await tick();renderRadio()}catch(e){toast(e.message);$("raSkip").disabled=false}};
  $("raTags").onclick=radioTagsDlg;$("raAdd").onclick=radioAddDlg;$("raList").onclick=radioListDlg;if($("raTune"))$("raTune").onclick=()=>{RA.blocked=false;radioPlayer();renderRadio()}}
 document.addEventListener("click",()=>{if(RA.blocked){radioPlayer()}},true);
 setInterval(()=>{if(S&&S.configured){radioPlayer();renderRadio()}},1000);
@@ -1318,27 +1324,28 @@ function radioTagsDlg(){const r=X().radio,cnt=r.tags,all=Object.keys(cnt),gs=(r.
  const groups=gs.map(g=>({name:g.name,tags:g.tags.filter(t=>t in cnt)})).filter(g=>g.tags.length);const rest=all.filter(t=>!inG.has(t)).sort();
  if(rest.length)groups.push({name:gs.length?"Not grouped yet":"All tags",tags:rest});
  const ast=(r.ai_tags||{}),open=LS.get("tg_open",{}),blocked=new Set(r.blocked||[]);
- openDlg("RotRadio: tags",`<div class="dim">Ticked tags are what the radio picks from: a song plays if it has at least one ticked tag. <b>🚫 Blocked</b> tags go further: a song with a blocked tag <b>never</b> plays, whatever other tags it has. This is shared: it changes what everyone hears.${r.cfg_by?" Last changed by "+esc(who(r.cfg_by))+".":""}</div>
+ openDlg("RotRadio: tags",`<div class="dim">Click a tag's box to switch it: <span class="tri" data-st="on"></span> on → <span class="tri" data-st="off"></span> off → <span class="tri" data-st="bl"></span> blocked → on. The radio plays songs with at least one tag that's on. A song with a <b>blocked</b> tag <b>never</b> plays, whatever its other tags. This is shared: it changes what everyone hears.${r.cfg_by?" Last changed by "+esc(who(r.cfg_by))+".":""}</div>
  ${gs.length?`<div class="dim" style="font-size:12px">Groups sorted by ${r.groups.model?"AI ("+esc(r.groups.model)+")":esc(who(r.groups.by))}, ${esc(dayName(r.groups.ts).toLowerCase())}.</div>`:""}
  <div class="in" style="max-height:52vh;overflow:auto;padding:4px 6px">${groups.length?groups.map((g,gi)=>{const on=g.tags.filter(t=>!r.disabled.includes(t)&&!blocked.has(t)).length;
   return `<details data-gi="${gi}" ${open[g.name]!==false?"open":""} style="margin-bottom:4px"><summary style="cursor:pointer;padding:2px 0"><label onclick="event.stopPropagation()"><input type="checkbox" class="raGrp" data-gi="${gi}"></label> <b>${esc(g.name)}</b> <span class="dim raGc" data-gi="${gi}">${on}/${g.tags.length} on</span></summary>
-  <div style="column-width:175px;padding-left:22px">${g.tags.sort().map(t=>`<div class="raRow" style="display:flex;gap:4px;align-items:center;break-inside:avoid"><label style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><input type="checkbox" class="raTg" data-gi="${gi}" value="${esc(t)}" ${r.disabled.includes(t)?"":"checked"}> <span class="raNm">${esc(t)}</span> <span class="dim">(${cnt[t]})</span></label><button class="btn sm raBl ${blocked.has(t)?"b":""}" data-tag="${esc(t)}" title="Block: songs with this tag never play" aria-pressed="${blocked.has(t)}" style="min-height:17px;padding:0 4px">🚫</button></div>`).join("")}</div></details>`}).join(""):'<span class="dim">No tags yet: they come from the songs.</span>'}</div>
+  <div style="column-width:150px;padding-left:22px">${g.tags.sort().map(t=>`<div class="raRow" style="display:flex;gap:5px;align-items:center;break-inside:avoid;padding:1px 0"><button class="tri" data-gi="${gi}" data-tag="${esc(t)}" data-st="${blocked.has(t)?"bl":r.disabled.includes(t)?"off":"on"}"></button><span class="raNm" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t)}</span><span class="dim">(${cnt[t]})</span></div>`).join("")}</div></details>`}).join(""):'<span class="dim">No tags yet: they come from the songs.</span>'}</div>
  ${ast.error?`<div style="color:#ffb4b4;font-size:12px">AI: ${esc(ast.error)}</div>`:""}
  <div class="btns"><button class="btn" id="raAI">${ast.busy?"Sorting...":"✨ Sort into groups with AI"}</button><button class="btn" id="raAll">Tick all</button><button class="btn" id="raNone">Untick all</button><button class="btn b" id="raSave">Save</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`,{wide:true});
- const isBl=t=>blocked.has(t);
- const paint=()=>document.querySelectorAll(".raRow").forEach(row=>{const c=row.querySelector(".raTg"),b=isBl(c.value);c.disabled=b;row.querySelector(".raNm").style.cssText=b?"text-decoration:line-through;color:#ff8a8a":"";const btn=row.querySelector(".raBl");btn.classList.toggle("b",b);btn.setAttribute("aria-pressed",b);btn.style.background=b?"#8a2020":"";btn.style.opacity=b?"1":".55";btn.title=b?"Blocked: click to allow this tag again":"Block: songs with this tag never play"});
- const sync=gi=>{const tg=[...document.querySelectorAll(`.raTg[data-gi="${gi}"]`)].filter(c=>!isBl(c.value)),g=document.querySelector(`.raGrp[data-gi="${gi}"]`),n=tg.filter(c=>c.checked).length;
-  g.checked=tg.length>0&&n===tg.length;g.indeterminate=n>0&&n<tg.length;document.querySelector(`.raGc[data-gi="${gi}"]`).textContent=`${n}/${document.querySelectorAll(`.raTg[data-gi="${gi}"]`).length} on`};
- const syncAll=()=>{paint();document.querySelectorAll(".raGrp").forEach(g=>sync(g.dataset.gi))};syncAll();
- document.querySelectorAll(".raGrp").forEach(g=>g.onchange=()=>{document.querySelectorAll(`.raTg[data-gi="${g.dataset.gi}"]`).forEach(c=>{if(!isBl(c.value))c.checked=g.checked});sync(g.dataset.gi)});
- document.querySelectorAll(".raTg").forEach(c=>c.onchange=()=>sync(c.dataset.gi));
- document.querySelectorAll(".raBl").forEach(b=>b.onclick=e=>{e.preventDefault();const t=b.dataset.tag;blocked.has(t)?blocked.delete(t):blocked.add(t);syncAll()});
+ const tris=gi=>[...document.querySelectorAll(gi===undefined?"#dlgBody button.tri":`#dlgBody button.tri[data-gi="${gi}"]`)];
+ const paint=b=>{const s=b.dataset.st;b.setAttribute("aria-label",b.dataset.tag+": "+({on:"on",off:"off",bl:"blocked"})[s]);b.title=({on:"On. Click to turn off",off:"Off. Click again to block",bl:"Blocked: songs with this tag never play. Click to turn on"})[s];
+  const nm=b.parentElement.querySelector(".raNm");nm.style.cssText="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"+(s==="bl"?"text-decoration:line-through;color:#ff8a8a":s==="off"?"color:var(--dim)":"")};
+ const sync=gi=>{const all=tris(gi),free=all.filter(b=>b.dataset.st!=="bl"),n=free.filter(b=>b.dataset.st==="on").length,g=document.querySelector(`.raGrp[data-gi="${gi}"]`),bl=all.length-free.length;
+  g.checked=free.length>0&&n===free.length;g.indeterminate=n>0&&n<free.length;document.querySelector(`.raGc[data-gi="${gi}"]`).textContent=`${n}/${all.length} on`+(bl?` · ${bl} blocked`:"")};
+ const syncAll=()=>{tris().forEach(paint);document.querySelectorAll(".raGrp").forEach(g=>sync(g.dataset.gi))};syncAll();
+ tris().forEach(b=>b.onclick=e=>{e.preventDefault();b.dataset.st=({on:"off",off:"bl",bl:"on"})[b.dataset.st];paint(b);sync(b.dataset.gi)});
+ document.querySelectorAll(".raGrp").forEach(g=>g.onchange=()=>{tris(g.dataset.gi).forEach(b=>{if(b.dataset.st!=="bl"){b.dataset.st=g.checked?"on":"off";paint(b)}});sync(g.dataset.gi)});
  document.querySelectorAll("details[data-gi]").forEach(d=>d.ontoggle=()=>{open[groups[+d.dataset.gi].name]=d.open;LS.set("tg_open",open)});
- $("raAll").onclick=()=>{document.querySelectorAll(".raTg").forEach(c=>c.checked=true);syncAll()};
- $("raNone").onclick=()=>{document.querySelectorAll(".raTg").forEach(c=>c.checked=false);syncAll()};
+ $("raAll").onclick=()=>{tris().forEach(b=>{if(b.dataset.st!=="bl")b.dataset.st="on"});syncAll()};
+ $("raNone").onclick=()=>{tris().forEach(b=>{if(b.dataset.st!=="bl")b.dataset.st="off"});syncAll()};
  $("raAI").onclick=async()=>{const a=await api("/api/x/ai_get").catch(()=>null);if(!a||!a.has_key){toast("Add an AI API key first");return aiDlg()}
   $("raAI").disabled=true;$("raAI").textContent="Sorting...";try{const res=await api("/api/x/ai_sort_tags",{fresh:true});await tick();radioTagsDlg();toast("Sorted into "+res.groups+" groups")}catch(e){toast(e.message);$("raAI").disabled=false;$("raAI").textContent="✨ Sort into groups with AI"}};
- $("raSave").onclick=async()=>{const off=[...document.querySelectorAll(".raTg")].filter(c=>!c.checked).map(c=>c.value);try{await api("/api/x/radio_cfg",{disabled:off,blocked:[...blocked]});closeDlg();toast("Saved. The radio switches after the song that's playing"+(blocked.size?" (a blocked song stops straight away)":"")+".");tick()}catch(e){toast(e.message)}}}
+ $("raSave").onclick=async()=>{const off=tris().filter(b=>b.dataset.st==="off").map(b=>b.dataset.tag),bl=tris().filter(b=>b.dataset.st==="bl").map(b=>b.dataset.tag);
+  try{await api("/api/x/radio_cfg",{disabled:off,blocked:bl});closeDlg();toast("Saved. The radio switches after the song that's playing"+(bl.length?" (a blocked song stops straight away)":"")+".");tick()}catch(e){toast(e.message)}}}
 
 /* ---- RotRadio songs list: uploaded songs and songs from your files ---- */
 function radioListDlg(){const r=X().radio,bl=new Set(r.blocked||[]),up=r.tracks.filter(t=>t.source!=="files"),lib=r.tracks.filter(t=>t.source==="files");
@@ -1380,6 +1387,7 @@ function xLogHtml(e){const u=`<b>${esc(who(e.user))}</b>`,x=X();const t=x.tasks.
  case"fb_comment":return `${u} replied to ${fl}: “${emojify(esc(e.text))}”`;
  case"radio_track":return `${u} added <b>${esc(e.title)}</b> to RotRadio`;
  case"radio_track_set":{const nm=tr?`<b>${esc(tr.title)}</b>`:"a song";return e.removed?`${u} took ${nm} off RotRadio`:e.title?`${u} renamed a song to <b>${esc(e.title)}</b>`:`${u} changed the tags on ${nm}`}
+ case"radio_skip":return `${u} skipped <b>${esc(e.title||"a song")}</b> on RotRadio`;
  case"radio_cfg":return `${u} changed which tags RotRadio plays${(e.blocked||[]).length?" ("+e.blocked.length+" blocked)":""}`;
  case"radio_groups":return (e.groups||[]).length?`${u}'s AI sorted the radio tags into ${e.groups.length} groups`:null}
  if(/^(task_|cal_|inv_|fb_|radio_)/.test(e.kind||""))return null;return undefined}

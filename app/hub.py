@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "5.6"
+HUB_VERSION = "5.7"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -3132,7 +3132,7 @@ def monitor():
                     last_written, last_presence_write = status, now()
             if tick % 20 == 5:
                 threading.Thread(target=github_check, daemon=True).start()
-            if tick % 2 == 1:
+            if True:
                 try:
                     radio_tick()
                 except Exception as e:
@@ -3261,6 +3261,7 @@ def x_state():
     radio_cfg = {"disabled": [], "blocked": [], "by": None, "ts": 0}
     lib_over = {}
     radio_groups = {"groups": [], "by": None, "ts": 0, "model": ""}
+    skips = []
     for e in ws_events():
         k, u, ts = e.get("kind") or "", e.get("user"), e.get("ts", 0)
         if not k.startswith(("task_", "cal_", "inv_", "fb_", "radio_")):
@@ -3352,6 +3353,8 @@ def x_state():
                     tracks[e["rid"]][f] = e[f]
         elif k == "radio_cfg":
             radio_cfg = {"disabled": e.get("disabled", []), "blocked": e.get("blocked", radio_cfg.get("blocked", [])), "by": u, "ts": ts}
+        elif k == "radio_skip" and now() - ts < 3600:
+            skips.append({"rid": e.get("rid"), "start": e.get("start"), "user": u, "ts": ts})
         elif k == "radio_groups" and isinstance(e.get("groups"), list):
             radio_groups = {"groups": e["groups"], "by": u, "ts": ts, "model": e.get("model", "")}
     state = {"tasks": {k: v for k, v in tasks.items() if not v["deleted"]},
@@ -3360,7 +3363,7 @@ def x_state():
              "items": {k: v for k, v in items.items() if not v["deleted"]},
              "feedback": {k: v for k, v in fb.items() if not v["deleted"]},
              "tracks": {k: v for k, v in tracks.items() if not v["removed"]},
-             "radio_cfg": radio_cfg, "radio_groups": radio_groups, "lib_over": lib_over}
+             "radio_cfg": radio_cfg, "radio_groups": radio_groups, "lib_over": lib_over, "skips": skips}
     with WS_LOCK:
         X_CACHE["sig"], X_CACHE["state"] = sig, state
     return state
@@ -3494,6 +3497,17 @@ def ai_tick():
 # (which track starts when) to _hub/radio/schedule-<name>.json; every window plays the same track at the same
 # second, using the PC clocks. Each PC mutes on its own.
 RADIO = {"recent": [], "cfg_sig": None}
+SKIPS_ALLOWED, SKIP_WINDOW = 3, 600  # each person gets 3 skips per 10 minutes
+
+
+def _skipped(st_):
+    return {(s["rid"], round(float(s.get("start") or 0), 1)) for s in st_.get("skips", [])}
+
+
+def radio_skips_left(st_, user):
+    mine = sorted(s["ts"] for s in st_.get("skips", []) if s["user"] == user and now() - s["ts"] < SKIP_WINDOW)
+    left = max(0, SKIPS_ALLOWED - len(mine))
+    return left, (mine[0] + SKIP_WINDOW if left == 0 and mine else None)
 
 
 LIB_SONGS = {"ts": 0, "list": []}
@@ -3606,10 +3620,19 @@ def radio_tick():
     cur = read_json(path, {}) or {}
     base = base or cur
     queue = [q for q in (base.get("queue") or []) if q.get("start", 0) + q.get("dur", 0) > now()]
+    skipped = _skipped(st_)
+    changed = False
+    if any((q["rid"], round(float(q["start"]), 1)) in skipped for q in queue):
+        # someone skipped: drop it and move the rest forward so the next song starts now
+        rest = [q for q in queue if (q["rid"], round(float(q["start"]), 1)) not in skipped and q["start"] > now()]
+        t0 = now() + 0.8
+        for q in rest:
+            q["start"] = round(t0, 2)
+            t0 += q["dur"] + 1.5
+        queue, changed = rest, True
     elig = radio_eligible(st_)
     ids = {t["rid"] for t in elig}
     cfg_sig = hashlib.md5(json.dumps([sorted(st_["radio_cfg"]["disabled"]), sorted(st_["radio_cfg"].get("blocked", [])), sorted(ids)]).encode()).hexdigest()
-    changed = False
     if cfg_sig != RADIO["cfg_sig"]:
         # tags or tracks changed: keep the song that's playing, choose the rest again
         if RADIO["cfg_sig"] is not None:
@@ -3640,7 +3663,9 @@ def radio_tick():
 def radio_view():
     st_ = x_state()
     s = radio_current_schedule()
-    q = [dict(x) for x in (s or {}).get("queue", []) if x.get("start", 0) + x.get("dur", 0) > now() - 2]
+    skipped = _skipped(st_)
+    q = [dict(x) for x in (s or {}).get("queue", []) if x.get("start", 0) + x.get("dur", 0) > now() - 2
+         and (x.get("rid"), round(float(x.get("start") or 0), 1)) not in skipped]
     for x in q:
         try:
             x["here"] = os.path.isfile(safe_path(x["file"]))
@@ -3655,6 +3680,7 @@ def radio_view():
             t["here"] = False
     return {"queue": q[:6], "dj": radio_dj(), "tags": radio_tags(st_), "disabled": st_["radio_cfg"]["disabled"],
             "blocked": st_["radio_cfg"].get("blocked", []),
+            "skips_left": radio_skips_left(st_, me())[0], "skip_again": radio_skips_left(st_, me())[1], "skips_allowed": SKIPS_ALLOWED,
             "cfg_by": st_["radio_cfg"]["by"], "tracks": tracks, "groups": st_["radio_groups"], "ai_tags": AI["state"], "playable": len(radio_eligible(st_)),
             "folder": rel(RADIO_MUSIC)}
 
@@ -3887,6 +3913,21 @@ def x_post(path, b):
             d["removed"] = True
         ws_add("radio_track_set", rid=rid, **d)
         return 200, {"ok": True}
+    if p == "radio_skip":
+        left, again = radio_skips_left(st_, me())
+        if left <= 0:
+            raise ValueError("You've used your %d skips. Next one in %d min." % (SKIPS_ALLOWED, max(1, round((again - now()) / 60))))
+        s = radio_current_schedule() or {}
+        cur = next((x for x in s.get("queue", []) if x["start"] <= now() < x["start"] + x["dur"]
+                    and (x["rid"], round(float(x["start"]), 1)) not in _skipped(st_)), None)
+        if not cur or cur["rid"] != b.get("rid"):
+            raise ValueError("That song has already finished")
+        ws_add("radio_skip", rid=cur["rid"], start=cur["start"], title=cur.get("title", ""))
+        try:
+            radio_tick()  # if this PC is the DJ, move on right away
+        except Exception as e:
+            print("radio skip:", repr(e))
+        return 200, {"ok": True, "left": left - 1}
     if p == "radio_cfg":
         ws_add("radio_cfg", disabled=_tags(b.get("disabled"), 500),
                blocked=_tags(b.get("blocked") if "blocked" in b else st_["radio_cfg"].get("blocked", []), 500))
