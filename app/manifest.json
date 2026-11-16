@@ -1,5 +1,5 @@
 {
- "version": "5.5",
+ "version": "5.6",
  "files": [
   "ui.html",
   "phone.html",
@@ -7,7 +7,18 @@
   "Install RotLab.cmd",
   "Install RotLab.pyw",
   "README.md",
+  "emoji-grin.webp",
+  "emoji-happy.webp",
+  "emoji-shy.webp",
+  "emoji-pleading.webp",
+  "emoji-stare.webp",
+  "emoji-blank.webp",
+  "emoji-speechless.webp",
+  "emoji-unamused.webp",
+  "emoji-tired.webp",
+  "emoji-sad.webp",
+  "emoji-angry.webp",
   "hub.py"
  ],
- "notes": "Inventory: sub-places and a proper owner picker. Rename songs. Calendar events open with notes everyone can add. Radio tags in groups, sorted by AI (File > AI automation, your own API key). The version in the corner now matches what's installed."
+ "notes": "Block radio tags so songs with them never play. Audio files tagged Music in Files play on the radio. 11 animated emojis in chat, comments and notes. Calendar notes and other changes now show in the feed. Optional: show which program you're using (File > Show what I'm doing, off by default)."
 }

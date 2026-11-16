@@ -95,7 +95,11 @@ td.nm{max-width:300px;overflow:hidden;text-overflow:ellipsis}
 .right{width:300px;flex:none;padding:5px;display:flex;flex-direction:column;gap:5px;min-height:0}
 .people{padding:5px 8px;display:flex;flex-direction:column;gap:2px}
 .dot{width:9px;height:9px;border:1px solid #000;display:inline-block;flex:none;background:#555}
-.dot.editing{background:#b48cff}.dot.hub,.dot.online{background:#3fbf6a}
+.dot.editing{background:#b48cff}.dot.away{background:#d9a52a}
+.emo{height:22px;vertical-align:middle;margin:-3px 1px}
+#emoPick{position:fixed;z-index:80;display:grid;grid-template-columns:repeat(6,42px);gap:2px;padding:4px}
+.emoBtn{background:none;border:0;cursor:pointer;padding:3px;height:42px;display:flex;align-items:center;justify-content:center}
+.emoBtn img{height:34px}.emoBtn:hover{background:var(--sel)}.dot.hub,.dot.online{background:#3fbf6a}
 .feed{flex:1;min-height:0;overflow:auto;padding:6px 8px;line-height:1.5}
 .feed .day{color:var(--dim);font-size:12px;margin-top:6px}
 .feed .t{color:var(--dim);margin-right:6px;font-size:12px}
@@ -178,7 +182,8 @@ label.ck{display:flex;gap:6px;align-items:center}
    <button data-act="openinbox">Open Inbox folder</button>
    <button data-act="sortinbox">Sort Inbox now</button><hr>
    <button data-act="settings">Settings...</button>
-   <button data-act="ai">AI automation...</button><hr>
+   <button data-act="ai">AI automation...</button>
+   <button data-act="share">Show what I'm doing...</button><hr>
    <button data-act="quit">Quit RotLab</button></div></div>
   <div class="mi"><button><u>P</u>roject</button><div class="drop out">
    <button data-act="projset">Rename / change type...</button>
@@ -216,7 +221,7 @@ label.ck{display:flex;gap:6px;align-items:center}
    <div class="in" id="radio"></div><audio id="radioAudio" preload="auto"></audio>
    <div class="feed in" id="feed"></div>
    <div id="typing" aria-live="polite"></div>
-   <div style="display:flex;gap:6px"><label for="say" class="dim" style="align-self:center">Say:</label><input id="say" class="field" style="flex:1;min-width:0"><button class="btn" id="sendBtn">Send</button></div>
+   <div style="display:flex;gap:6px"><label for="say" class="dim" style="align-self:center">Say:</label><input id="say" class="field" style="flex:1;min-width:0"><button class="btn" data-emoopen="say" title="Emoji" aria-label="Emoji" style="padding:0 6px"><img src="/emoji/emoji-grin.webp" alt="" style="height:18px;vertical-align:middle"></button><button class="btn" id="sendBtn">Send</button></div>
   </div>
  </div>
  <div class="status">
@@ -287,7 +292,7 @@ async function act(a){try{
  else if(a.startsWith("v-"))setArea(a.slice(2));
  else if(a==="msgonly"){msgOnly=!msgOnly;LS.set("msgonly",msgOnly);$("feed")._last="";renderFeed(true);toast(msgOnly?"Feed shows only messages":"Feed shows messages and changes")}
  else if(a==="reload")location.reload();
- else if(a==="ai")aiDlg();
+ else if(a==="ai")aiDlg();else if(a==="share")shareDlg();
  else if(a==="cam")camDlg();else if(a==="screen")avStart("screen");else if(a==="avstop")avStopAll();
  else if(a==="bug")fbNewDlg("bug");else if(a==="idea")fbNewDlg("suggestion");
  else if(a==="sync")syncDlg();else if(a==="phone")phoneDlg();else if(a==="about")aboutDlg();
@@ -720,7 +725,7 @@ function wsLogHtml(e){{const xh=xLogHtml(e);if(xh!==undefined)return xh}const u=
   case"req_review":return e.verdict==="approve"?`${u} marked ${rl} done`:`${u} replied on ${rl}`;case"req_comment":return `${u} replied on ${rl}`;case"req_status":return e.status==="cancelled"?`${u} cancelled ${rl}`:null;
   case"rev_comment":return `${u} commented on ${fileLink(e.file)}${e.t!=null?" at "+dur(e.t):""}: “${esc(e.text)}”`;
   case"link_new":return `${u} linked ${e.file?fileLink(e.file):esc(pname(e.src))} into ${esc(pname(e.pid))}`;case"link_set":return e.version&&!e.initial?(e.auto?`${esc(short(e.version))} was updated in the linked project`:`${u} switched a linked file to ${esc(short(e.version))}`):null}return null}
-function linkify(t){let h=esc(t);h=h.replace(/(^|\s)#(\d{1,4})\b/g,(m,s,n)=>{const r=W.requests.find(x=>x.pid===pid&&x.num===+n);return r?`${s}<a data-ticket="${r.rid}">#${n}</a>`:m});return h}
+function linkify(t){let h=esc(t);h=h.replace(/(^|\s)#(\d{1,4})\b/g,(m,s,n)=>{const r=W.requests.find(x=>x.pid===pid&&x.num===+n);return r?`${s}<a data-ticket="${r.rid}">#${n}</a>`:m});return emojify(h)}
 function renderFeed(scrollEnd){const box=$("feed"),atEnd=box.scrollHeight-box.scrollTop-box.clientHeight<30,rd=S.read||{};if(readAt===null)readAt=Math.min(rd.chat||0,rd.log||0);
  liveChats=liveChats.filter(l=>Date.now()/1000-l.ts<900&&!S.chat.some(m=>m.user===l.user&&m.text===l.text&&Math.abs(m.ts-l.ts)<600));
  let rows=S.chat.concat(liveChats).map(m=>({ts:m.ts,user:m.user,msg:true,_h:`<b>${esc(who(m.user))}</b>: ${linkify(m.text)}`}));
@@ -1007,7 +1012,7 @@ function taskDlg(tid){const t=X().tasks.find(x=>x.tid===tid);if(!t){closeDlg();r
  ${t.reqs.length?`<div class="dim">Requirements</div><div class="in" style="padding:4px 8px">${t.reqs.map((r,i)=>`<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-treq="${i}" ${r.done?"checked":""}><span style="${r.done?"text-decoration:line-through;color:var(--dim)":""}">${esc(r.text)}</span>${r.done&&r.by?`<span class="dim" style="font-size:11px">${esc(who(r.by))}</span>`:""}</label>`).join("")}</div>`:""}
  <div style="display:flex;gap:6px;flex-wrap:wrap">${Object.entries(TST).map(([k,l])=>`<button class="btn sm ${t.status===k?"b":""}" data-tset="${k}">${l}</button>`).join("")}</div>
  <div class="dim">Comments</div><div class="in" style="max-height:200px;overflow:auto;padding:4px 8px">${t.thread.length?t.thread.map(x=>`<div><span class="dim" style="font-size:11px">${esc(dayName(x.ts))} ${esc(tm(x.ts))}</span> <b>${esc(who(x.user))}</b>${x.kind==="status"?` <span class="dim">set it to ${esc(TST[x.text]||x.text)}</span>`:": "+linkify(x.text)}</div>`).join(""):'<span class="dim">Nothing yet.</span>'}</div>
- <div style="display:flex;gap:6px"><input id="tC" class="field" style="flex:1" placeholder="Write a comment"><button class="btn" id="tCs">Send</button></div>
+ <div style="display:flex;gap:6px"><input id="tC" class="field" style="flex:1" placeholder="Write a comment"><button class="btn" data-emoopen="tC" title="Emoji" aria-label="Emoji">☺</button><button class="btn" id="tCs">Send</button></div>
  <div class="btns"><button class="btn" id="tDel">Delete</button><button class="btn" id="tEd">Edit...</button><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true,nofocus:true});
  const re=async(u,b)=>{try{await api(u,b);await tick();taskDlg(tid)}catch(e){toast(e.message)}};
  document.querySelectorAll("[data-treq]").forEach(c=>c.onchange=()=>re("/api/x/task_req",{tid,i:+c.dataset.treq,done:c.checked}));
@@ -1065,8 +1070,8 @@ function fbDlg(fid){const f=X().feedback.find(x=>x.fid===fid);if(!f){closeDlg();
  openDlg((f.type==="bug"?"Bug: ":"Suggestion: ")+f.title,`<div class="dim">${esc(who(f.by))} · ${esc(dayName(f.ts))} ${esc(tm(f.ts))} · ${f.votes.length} vote${f.votes.length===1?"":"s"}${f.votes.length?" ("+f.votes.map(v=>esc(who(v))).join(", ")+")":""}</div>
  ${f.text?`<div class="in" style="padding:6px 8px;white-space:pre-wrap;max-height:220px;overflow:auto">${esc(f.text)}</div>`:""}
  <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="dim">Status:</span>${Object.entries(FST).map(([k,l])=>`<button class="btn sm ${f.status===k?"b":""}" data-fst="${k}">${l}</button>`).join("")}</div>
- <div class="in" style="max-height:200px;overflow:auto;padding:4px 8px">${f.thread.length?f.thread.map(x=>`<div><span class="dim" style="font-size:11px">${esc(dayName(x.ts))} ${esc(tm(x.ts))}</span> <b>${esc(who(x.user))}</b>${x.kind==="status"?` <span class="dim">marked it ${esc(FST[x.text]||x.text)}</span>`:": "+esc(x.text)}</div>`).join(""):'<span class="dim">No replies yet.</span>'}</div>
- <div style="display:flex;gap:6px"><input id="fbC" class="field" style="flex:1" placeholder="Reply"><button class="btn" id="fbCs">Send</button></div>
+ <div class="in" style="max-height:200px;overflow:auto;padding:4px 8px">${f.thread.length?f.thread.map(x=>`<div><span class="dim" style="font-size:11px">${esc(dayName(x.ts))} ${esc(tm(x.ts))}</span> <b>${esc(who(x.user))}</b>${x.kind==="status"?` <span class="dim">marked it ${esc(FST[x.text]||x.text)}</span>`:": "+linkify(x.text)}</div>`).join(""):'<span class="dim">No replies yet.</span>'}</div>
+ <div style="display:flex;gap:6px"><input id="fbC" class="field" style="flex:1" placeholder="Reply"><button class="btn" data-emoopen="fbC" title="Emoji" aria-label="Emoji">☺</button><button class="btn" id="fbCs">Send</button></div>
  <div class="btns"><button class="btn" id="fbCopy">Copy as text</button>${f.by===S.me?'<button class="btn" id="fbDel">Delete</button>':""}<button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true,nofocus:true});
  const re=async b=>{try{await api("/api/x/fb_act",Object.assign({fid},b));await tick();fbDlg(fid)}catch(e){toast(e.message)}};
  document.querySelectorAll("[data-fst]").forEach(b=>b.onclick=()=>re({act:"status",status:b.dataset.fst}));
@@ -1074,16 +1079,6 @@ function fbDlg(fid){const f=X().feedback.find(x=>x.fid===fid);if(!f){closeDlg();
  $("fbCopy").onclick=async()=>{const t=`[${f.type==="bug"?"Bug":"Suggestion"}] ${f.title}\n\n${f.text}\n\n${f.thread.filter(x=>x.kind==="comment").map(x=>x.user+": "+x.text).join("\n")}`;try{await navigator.clipboard.writeText(t);toast("Copied, e.g. to paste into a GitHub issue")}catch(e){toast("Couldn't copy")}};
  if($("fbDel"))$("fbDel").onclick=async()=>{if(confirm("Delete this for everyone?")){await api("/api/x/fb_act",{fid,act:"delete"});closeDlg();tick()}}}
 
-function xLogHtml(e){const u=`<b>${esc(who(e.user))}</b>`;const t=X().tasks.find(x=>x.tid===e.tid),tl=t?`<a data-task="${esc(t.tid)}">${esc(t.title)}</a>`:"a task";
- switch(e.kind){case"task_new":return `${u} made a task, ${tl}${(e.assignees||[]).length?" for "+e.assignees.map(a=>esc(who(a))).join(", "):""}${e.due?", due "+esc(fmtDate(e.due)):""}`;
- case"task_set":return e.status==="done"?`${u} finished ${tl}`:e.status?`${u} set ${tl} to ${esc(TST[e.status]||e.status)}`:null;
- case"task_comment":return `${u} commented on ${tl}: “${esc(e.text)}”`;
- case"cal_new":return `${u} added <b>${esc(e.title)}</b> to the calendar (${esc(fmtDate(e.date))})`;
- case"inv_item_new":return `${u} added <b>${esc(e.name)}</b> to the inventory`;
- case"fb_new":return `${u} ${e.type==="bug"?"reported a bug":"suggested something"}: <a data-fb="${esc(e.fid)}">${esc(e.title)}</a>`;
- case"radio_track":return `${u} added <b>${esc(e.title)}</b> to RotRadio`;
- case"radio_cfg":return `${u} changed which tags RotRadio plays`}
- if(/^(task_|cal_|inv_|fb_|radio_)/.test(e.kind||""))return null;return undefined}
 document.addEventListener("click",e=>{const a=e.target.closest("#feed [data-task],#feed [data-fb],#foryou [data-task]");if(!a)return;e.preventDefault();a.dataset.task?taskDlg(a.dataset.task):fbDlg(a.dataset.fb)});
 
 /* ---- RotRadio ---- */
@@ -1113,7 +1108,7 @@ setInterval(()=>{if(S&&S.configured){radioPlayer();renderRadio()}},1000);
 function audioDur(f){return new Promise(res=>{const a=new Audio(),u=URL.createObjectURL(f);a.preload="metadata";const done=v=>{URL.revokeObjectURL(u);res(v)};a.onloadedmetadata=()=>done(isFinite(a.duration)?a.duration:0);a.onerror=()=>done(0);setTimeout(()=>done(0),15000);a.src=u})}
 let raFiles=[];
 function radioAddDlg(){raFiles=[];const known=Object.keys(X().radio.tags).sort();
- openDlg("Add songs to RotRadio",`<div class="dim">Pick music files (mp3, m4a, ogg, wav, flac...). Every song needs <b>at least 3 tags</b>: they decide when the radio plays it. Songs are shared with everyone you sync with.</div>
+ openDlg("Add songs to RotRadio",`<div class="dim">Pick music files (mp3, m4a, ogg, wav, flac...). Every song needs <b>at least 3 tags</b>: they decide when the radio plays it. Songs are shared with everyone you sync with. (Audio files tagged <b>Music</b> in Files play on the radio too.)</div>
  <div style="display:flex;gap:6px;align-items:center"><button class="btn" id="raPick">Choose files...</button><input type="file" id="raFile" accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac,.webm" multiple style="display:none"><span class="dim" id="raCount">No files chosen</span></div>
  <label class="dim" for="raAllTags">Tags for all of them (comma separated), added to each song's own tags</label><input id="raAllTags" class="field" style="width:100%" placeholder="e.g. chill, lofi, background">
  ${known.length?`<div class="chips" id="raKnown">${known.map(g=>`<button class="chip" data-tg="${esc(g)}">${esc(g)}</button>`).join("")}</div>`:""}
@@ -1275,48 +1270,12 @@ function calViewDlg(cid){const c=X().cal.find(x=>x.cid===cid);if(!c){closeDlg();
  ${c.notes?`<div class="in" style="padding:6px 8px;white-space:pre-wrap">${linkify(c.notes)}</div>`:""}
  <div class="dim">Notes</div><div class="in" id="cvThread" style="max-height:240px;overflow:auto;padding:4px 8px">${c.thread.length?c.thread.map(x=>`<div style="margin-bottom:3px"><span class="dim" style="font-size:11px">${esc(dayName(x.ts))} ${esc(tm(x.ts))}</span> <b>${esc(who(x.user))}</b>: <span style="white-space:pre-wrap">${linkify(x.text)}</span></div>`).join(""):'<span class="dim">No notes yet. Write what to bring, who\'s coming, addresses...</span>'}</div>
  <textarea id="cvNote" class="field" rows="2" style="width:100%" placeholder="Write a note (Ctrl+Enter to add)"></textarea>
- <div class="btns"><button class="btn b" id="cvAdd">Add note</button><button class="btn" id="cvEdit">Edit event...</button><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true,nofocus:true});
+ <div class="btns"><button class="btn" data-emoopen="cvNote" title="Emoji" aria-label="Emoji">☺</button><button class="btn b" id="cvAdd">Add note</button><button class="btn" id="cvEdit">Edit event...</button><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true,nofocus:true});
  const th=$("cvThread");th.scrollTop=th.scrollHeight;
  const add=async()=>{const v=$("cvNote").value.trim();if(!v)return;try{await api("/api/x/cal_note",{cid,text:v});await tick();calViewDlg(cid)}catch(e){toast(e.message)}};
  $("cvAdd").onclick=add;$("cvNote").onkeydown=e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey))add()};$("cvEdit").onclick=()=>calEventDlg(cid)}
 
 /* ---- RotRadio: edit songs, grouped tags ---- */
-function songEditDlg(rid){const t=X().radio.tracks.find(x=>x.rid===rid);if(!t)return;
- openDlg("Edit song",`<label class="dim" for="seT">Title</label><input id="seT" class="field" style="width:100%" maxlength="120" value="${esc(t.title)}">
- <label class="dim" for="seA">Artist</label><input id="seA" class="field" style="width:100%" maxlength="120" value="${esc(t.artist)}">
- <label class="dim" for="seG">Tags (comma separated, at least 3)</label><input id="seG" class="field" style="width:100%" value="${esc(t.tags.join(", "))}"><div class="dim" id="seN" style="font-size:12px"></div>
- <div class="dim" style="font-size:12px">File: ${esc(short(t.file))} · ${dur(t.dur)} · added by ${esc(who(t.by))}</div>
- <div class="btns"><button class="btn" id="seDel">Remove from radio</button><button class="btn b" id="seOk">Save</button><button class="btn" id="seBack">Back</button></div>`);
- const cnt=()=>{const n=$("seG").value.split(",").map(s=>s.trim()).filter(Boolean).length;$("seN").textContent=n>=3?n+" tags ✓":"needs "+(3-n)+" more";$("seN").style.color=n>=3?"#7fd18f":"#ffb27a";$("seOk").disabled=n<3||!$("seT").value.trim()};
- $("seG").oninput=cnt;$("seT").oninput=cnt;cnt();$("seBack").onclick=radioListDlg;
- $("seOk").onclick=async()=>{try{await api("/api/x/radio_track_set",{rid,title:$("seT").value.trim(),artist:$("seA").value.trim(),tags:$("seG").value.split(",")});await tick();radioListDlg();toast("Saved")}catch(e){toast(e.message)}};
- $("seDel").onclick=async()=>{if(!confirm("Remove "+t.title+" from RotRadio for everyone? (The file stays in _hub\\radio\\music.)"))return;try{await api("/api/x/radio_track_set",{rid,removed:true});await tick();radioListDlg()}catch(e){toast(e.message)}}}
-function radioListDlg(){const r=X().radio;
- openDlg("RotRadio: all songs ("+r.tracks.length+")",`<div class="in" style="max-height:60vh;overflow:auto"><table><thead><tr><th>Song</th><th>Tags</th><th>Length</th><th>Added by</th><th></th></tr></thead><tbody>${r.tracks.map(t=>`<tr><td><a data-sedit="${esc(t.rid)}"><b>${esc(t.title)}</b></a>${t.artist?` <span class="dim">${esc(t.artist)}</span>`:""}${t.here?"":' <span class="dim">(syncing)</span>'}</td><td>${t.tags.map(g=>`<span class="tag" style="${r.disabled.includes(g)?"opacity:.45":""}">${esc(g)}</span>`).join("")}</td><td>${dur(t.dur)}</td><td>${esc(who(t.by))}</td>
-  <td><button class="btn sm" data-sedit="${esc(t.rid)}">Edit...</button></td></tr>`).join("")||'<tr><td colspan="5" class="dim">No songs yet.</td></tr>'}</tbody></table></div>
- <div class="btns"><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true});
- document.querySelectorAll("[data-sedit]").forEach(b=>b.onclick=()=>songEditDlg(b.dataset.sedit))}
-function radioTagsDlg(){const r=X().radio,cnt=r.tags,all=Object.keys(cnt),gs=(r.groups&&r.groups.groups)||[],inG=new Set(gs.flatMap(g=>g.tags));
- const groups=gs.map(g=>({name:g.name,tags:g.tags.filter(t=>t in cnt)})).filter(g=>g.tags.length);const rest=all.filter(t=>!inG.has(t)).sort();
- if(rest.length)groups.push({name:gs.length?"Not grouped yet":"All tags",tags:rest});
- const ai=S.x&&S.x.radio,ast=(r.ai_tags||{}),open=LS.get("tg_open",{});
- openDlg("RotRadio: tags",`<div class="dim">The radio picks songs that have at least one ticked tag. This is shared: it changes what everyone hears.${r.cfg_by?" Last changed by "+esc(who(r.cfg_by))+".":""}</div>
- ${gs.length?`<div class="dim" style="font-size:12px">Groups sorted by ${r.groups.model?"AI ("+esc(r.groups.model)+")":esc(who(r.groups.by))}, ${esc(dayName(r.groups.ts).toLowerCase())}.</div>`:""}
- <div class="in" style="max-height:52vh;overflow:auto;padding:4px 6px">${groups.length?groups.map((g,gi)=>{const on=g.tags.filter(t=>!r.disabled.includes(t)).length;
-  return `<details data-gi="${gi}" ${open[g.name]!==false?"open":""} style="margin-bottom:4px"><summary style="cursor:pointer;padding:2px 0"><label onclick="event.stopPropagation()"><input type="checkbox" class="raGrp" data-gi="${gi}" ${on===g.tags.length?"checked":""}></label> <b>${esc(g.name)}</b> <span class="dim">${on}/${g.tags.length} on</span></summary>
-  <div style="column-width:150px;padding-left:22px">${g.tags.sort().map(t=>`<label style="display:block"><input type="checkbox" class="raTg" data-gi="${gi}" value="${esc(t)}" ${r.disabled.includes(t)?"":"checked"}> ${esc(t)} <span class="dim">(${cnt[t]})</span></label>`).join("")}</div></details>`}).join(""):'<span class="dim">No tags yet: they come from the songs.</span>'}</div>
- ${ast.error?`<div style="color:#ffb4b4;font-size:12px">AI: ${esc(ast.error)}</div>`:""}
- <div class="btns"><button class="btn" id="raAI">${ast.busy?"Sorting...":"✨ Sort into groups with AI"}</button><button class="btn" id="raAll">Tick all</button><button class="btn" id="raNone">Untick all</button><button class="btn b" id="raSave">Save</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`,{wide:true});
- const sync=gi=>{const tg=[...document.querySelectorAll(`.raTg[data-gi="${gi}"]`)],g=document.querySelector(`.raGrp[data-gi="${gi}"]`),n=tg.filter(c=>c.checked).length;g.checked=n===tg.length;g.indeterminate=n>0&&n<tg.length};
- document.querySelectorAll(".raGrp").forEach(g=>{sync(g.dataset.gi);g.onchange=()=>{document.querySelectorAll(`.raTg[data-gi="${g.dataset.gi}"]`).forEach(c=>c.checked=g.checked);sync(g.dataset.gi)}});
- document.querySelectorAll(".raTg").forEach(c=>c.onchange=()=>sync(c.dataset.gi));
- document.querySelectorAll("details[data-gi]").forEach(d=>d.ontoggle=()=>{open[groups[+d.dataset.gi].name]=d.open;LS.set("tg_open",open)});
- $("raAll").onclick=()=>{document.querySelectorAll(".raTg").forEach(c=>c.checked=true);document.querySelectorAll(".raGrp").forEach(g=>sync(g.dataset.gi))};
- $("raNone").onclick=()=>{document.querySelectorAll(".raTg").forEach(c=>c.checked=false);document.querySelectorAll(".raGrp").forEach(g=>sync(g.dataset.gi))};
- $("raAI").onclick=async()=>{const a=await api("/api/x/ai_get").catch(()=>null);if(!a||!a.has_key){toast("Add an AI API key first");return aiDlg()}
-  $("raAI").disabled=true;$("raAI").textContent="Sorting...";try{const res=await api("/api/x/ai_sort_tags",{fresh:true});await tick();radioTagsDlg();toast("Sorted into "+res.groups+" groups")}catch(e){toast(e.message);$("raAI").disabled=false;$("raAI").textContent="✨ Sort into groups with AI"}};
- $("raSave").onclick=async()=>{const off=[...document.querySelectorAll(".raTg")].filter(c=>!c.checked).map(c=>c.value);try{await api("/api/x/radio_cfg",{disabled:off});closeDlg();toast("Saved. The radio switches after the song that's playing.");tick()}catch(e){toast(e.message)}}}
-
 /* ---- AI automation settings ---- */
 async function aiDlg(){let a;try{a=await api("/api/x/ai_get")}catch(e){return toast(e.message)}
  openDlg("AI automation",`<div class="dim">RotLab can use an AI service with your own API key. Right now it does one thing: <b>sorts RotRadio's tags into groups</b> (genre, period, mood...) whenever new tags appear. Only the tag names are sent. The key stays on this PC (it isn't synced to anyone).</div>
@@ -1332,6 +1291,99 @@ async function aiDlg(){let a;try{a=await api("/api/x/ai_get")}catch(e){return to
  $("aiOk").onclick=async()=>{try{await save();closeDlg();toast("AI settings saved")}catch(e){toast(e.message)}};
  $("aiTest").onclick=async()=>{$("aiMsg").textContent="Testing...";try{await save();const r=await api("/api/x/ai_test");$("aiMsg").textContent="✓ It works. The AI answered: "+r.reply;$("aiMsg").style.color="#7fd18f"}catch(e){$("aiMsg").textContent="✖ "+e.message;$("aiMsg").style.color="#ffb4b4"}};
  if($("aiRm"))$("aiRm").onclick=async()=>{if(!confirm("Remove the API key from this PC?"))return;await api("/api/x/ai_set",{remove_key:true});aiDlg()}}
+
+/* ---- emojis ---- */
+const EMOJI=["grin","happy","shy","pleading","stare","blank","speechless","unamused","tired","sad","angry"];
+const emojify=h=>h.replace(/:([a-z]+):/g,(m,n)=>EMOJI.includes(n)?`<img class="emo" src="/emoji/emoji-${n}.webp" alt=":${n}:" title=":${n}:">`:m);
+function emojiPicker(input,anchor){let p=$("emoPick");if(p&&p._for===input){p.remove();return}if(p)p.remove();
+ p=document.createElement("div");p.id="emoPick";p.className="out";p._for=input;
+ p.innerHTML=EMOJI.map(n=>`<button class="emoBtn" data-emo="${n}" title=":${n}:" aria-label="${n}"><img src="/emoji/emoji-${n}.webp" alt=""></button>`).join("");
+ document.body.appendChild(p);const r=anchor.getBoundingClientRect();p.style.left=Math.max(4,Math.min(window.innerWidth-p.offsetWidth-4,r.right-p.offsetWidth))+"px";p.style.top=(r.top-p.offsetHeight-4)+"px";
+ p.onclick=e=>{const b=e.target.closest("[data-emo]");if(!b)return;e.stopPropagation();const el=$(input)||input,s=el.selectionStart??el.value.length,code=(s&&!/\s$/.test(el.value.slice(0,s))?" ":"")+":"+b.dataset.emo+": ";
+  el.value=el.value.slice(0,s)+code+el.value.slice(el.selectionEnd??s);el.focus();el.selectionStart=el.selectionEnd=s+code.length;if(!e.shiftKey)p.remove()}}
+document.addEventListener("click",e=>{const p=$("emoPick");if(p&&!p.contains(e.target)&&!e.target.closest("[data-emoopen]"))p.remove()});
+document.addEventListener("click",e=>{const b=e.target.closest("[data-emoopen]");if(b){e.preventDefault();emojiPicker(b.dataset.emoopen,b)}});
+
+/* ---- status sharing (off unless you switch it on) ---- */
+function shareDlg(){const cur=(S.settings&&S.settings.share_focus)||"off";
+ openDlg("Show what I'm doing",`<div class="dim">Choose what the people you sync with see next to your name when you're not in RotLab or VEGAS. This is <b>off</b> unless you turn it on, and you can change it any time.</div>
+ ${[["off","Just “online”","Nobody sees which program you're using."],["app","Which program","e.g. “using Chrome”, “using Discord”, or “away” after 10 minutes without the mouse or keyboard."],["title","Program and what's in it","e.g. “using Chrome: YouTube”. Window titles can show private things (a chat, an email, a document's name), so only pick this if you're happy for everyone to see them."]]
+  .map(([v,l,d])=>`<label style="display:flex;gap:8px;align-items:flex-start;margin:4px 0"><input type="radio" name="shf" value="${v}" ${cur===v?"checked":""}><span><b>${l}</b><br><span class="dim" style="font-size:12px">${d}</span></span></label>`).join("")}
+ <div class="dim" style="font-size:12px">Only works on Windows. It's checked every few seconds and only the short text above is shared.</div>
+ <div class="btns"><button class="btn b" id="shOk">Save</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`);
+ $("shOk").onclick=async()=>{try{await api("/api/x/share_focus",{mode:document.querySelector("[name=shf]:checked").value});closeDlg();toast("Saved");tick()}catch(e){toast(e.message)}}}
+
+/* ---- RotRadio tags: on / off / blocked ---- */
+function radioTagsDlg(){const r=X().radio,cnt=r.tags,all=Object.keys(cnt),gs=(r.groups&&r.groups.groups)||[],inG=new Set(gs.flatMap(g=>g.tags));
+ const groups=gs.map(g=>({name:g.name,tags:g.tags.filter(t=>t in cnt)})).filter(g=>g.tags.length);const rest=all.filter(t=>!inG.has(t)).sort();
+ if(rest.length)groups.push({name:gs.length?"Not grouped yet":"All tags",tags:rest});
+ const ast=(r.ai_tags||{}),open=LS.get("tg_open",{}),blocked=new Set(r.blocked||[]);
+ openDlg("RotRadio: tags",`<div class="dim">Ticked tags are what the radio picks from: a song plays if it has at least one ticked tag. <b>🚫 Blocked</b> tags go further: a song with a blocked tag <b>never</b> plays, whatever other tags it has. This is shared: it changes what everyone hears.${r.cfg_by?" Last changed by "+esc(who(r.cfg_by))+".":""}</div>
+ ${gs.length?`<div class="dim" style="font-size:12px">Groups sorted by ${r.groups.model?"AI ("+esc(r.groups.model)+")":esc(who(r.groups.by))}, ${esc(dayName(r.groups.ts).toLowerCase())}.</div>`:""}
+ <div class="in" style="max-height:52vh;overflow:auto;padding:4px 6px">${groups.length?groups.map((g,gi)=>{const on=g.tags.filter(t=>!r.disabled.includes(t)&&!blocked.has(t)).length;
+  return `<details data-gi="${gi}" ${open[g.name]!==false?"open":""} style="margin-bottom:4px"><summary style="cursor:pointer;padding:2px 0"><label onclick="event.stopPropagation()"><input type="checkbox" class="raGrp" data-gi="${gi}"></label> <b>${esc(g.name)}</b> <span class="dim raGc" data-gi="${gi}">${on}/${g.tags.length} on</span></summary>
+  <div style="column-width:175px;padding-left:22px">${g.tags.sort().map(t=>`<div class="raRow" style="display:flex;gap:4px;align-items:center;break-inside:avoid"><label style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><input type="checkbox" class="raTg" data-gi="${gi}" value="${esc(t)}" ${r.disabled.includes(t)?"":"checked"}> <span class="raNm">${esc(t)}</span> <span class="dim">(${cnt[t]})</span></label><button class="btn sm raBl ${blocked.has(t)?"b":""}" data-tag="${esc(t)}" title="Block: songs with this tag never play" aria-pressed="${blocked.has(t)}" style="min-height:17px;padding:0 4px">🚫</button></div>`).join("")}</div></details>`}).join(""):'<span class="dim">No tags yet: they come from the songs.</span>'}</div>
+ ${ast.error?`<div style="color:#ffb4b4;font-size:12px">AI: ${esc(ast.error)}</div>`:""}
+ <div class="btns"><button class="btn" id="raAI">${ast.busy?"Sorting...":"✨ Sort into groups with AI"}</button><button class="btn" id="raAll">Tick all</button><button class="btn" id="raNone">Untick all</button><button class="btn b" id="raSave">Save</button><button class="btn" onclick="closeDlg()">Cancel</button></div>`,{wide:true});
+ const isBl=t=>blocked.has(t);
+ const paint=()=>document.querySelectorAll(".raRow").forEach(row=>{const c=row.querySelector(".raTg"),b=isBl(c.value);c.disabled=b;row.querySelector(".raNm").style.cssText=b?"text-decoration:line-through;color:#ff8a8a":"";const btn=row.querySelector(".raBl");btn.classList.toggle("b",b);btn.setAttribute("aria-pressed",b);btn.style.background=b?"#8a2020":"";btn.style.opacity=b?"1":".55";btn.title=b?"Blocked: click to allow this tag again":"Block: songs with this tag never play"});
+ const sync=gi=>{const tg=[...document.querySelectorAll(`.raTg[data-gi="${gi}"]`)].filter(c=>!isBl(c.value)),g=document.querySelector(`.raGrp[data-gi="${gi}"]`),n=tg.filter(c=>c.checked).length;
+  g.checked=tg.length>0&&n===tg.length;g.indeterminate=n>0&&n<tg.length;document.querySelector(`.raGc[data-gi="${gi}"]`).textContent=`${n}/${document.querySelectorAll(`.raTg[data-gi="${gi}"]`).length} on`};
+ const syncAll=()=>{paint();document.querySelectorAll(".raGrp").forEach(g=>sync(g.dataset.gi))};syncAll();
+ document.querySelectorAll(".raGrp").forEach(g=>g.onchange=()=>{document.querySelectorAll(`.raTg[data-gi="${g.dataset.gi}"]`).forEach(c=>{if(!isBl(c.value))c.checked=g.checked});sync(g.dataset.gi)});
+ document.querySelectorAll(".raTg").forEach(c=>c.onchange=()=>sync(c.dataset.gi));
+ document.querySelectorAll(".raBl").forEach(b=>b.onclick=e=>{e.preventDefault();const t=b.dataset.tag;blocked.has(t)?blocked.delete(t):blocked.add(t);syncAll()});
+ document.querySelectorAll("details[data-gi]").forEach(d=>d.ontoggle=()=>{open[groups[+d.dataset.gi].name]=d.open;LS.set("tg_open",open)});
+ $("raAll").onclick=()=>{document.querySelectorAll(".raTg").forEach(c=>c.checked=true);syncAll()};
+ $("raNone").onclick=()=>{document.querySelectorAll(".raTg").forEach(c=>c.checked=false);syncAll()};
+ $("raAI").onclick=async()=>{const a=await api("/api/x/ai_get").catch(()=>null);if(!a||!a.has_key){toast("Add an AI API key first");return aiDlg()}
+  $("raAI").disabled=true;$("raAI").textContent="Sorting...";try{const res=await api("/api/x/ai_sort_tags",{fresh:true});await tick();radioTagsDlg();toast("Sorted into "+res.groups+" groups")}catch(e){toast(e.message);$("raAI").disabled=false;$("raAI").textContent="✨ Sort into groups with AI"}};
+ $("raSave").onclick=async()=>{const off=[...document.querySelectorAll(".raTg")].filter(c=>!c.checked).map(c=>c.value);try{await api("/api/x/radio_cfg",{disabled:off,blocked:[...blocked]});closeDlg();toast("Saved. The radio switches after the song that's playing"+(blocked.size?" (a blocked song stops straight away)":"")+".");tick()}catch(e){toast(e.message)}}}
+
+/* ---- RotRadio songs list: uploaded songs and songs from your files ---- */
+function radioListDlg(){const r=X().radio,bl=new Set(r.blocked||[]),up=r.tracks.filter(t=>t.source!=="files"),lib=r.tracks.filter(t=>t.source==="files");
+ const rows=ts=>ts.map(t=>{const isBl=t.tags.some(g=>bl.has(g));return `<tr style="${isBl?"opacity:.55":""}"><td><a data-sedit="${esc(t.rid)}"><b>${esc(t.title)}</b></a>${t.artist?` <span class="dim">${esc(t.artist)}</span>`:""}${t.source==="files"?` <div class="dim" style="font-size:11px">${esc(t.file)}</div>`:""}${t.here?"":' <span class="dim">(not on this PC yet)</span>'}${isBl?' <span style="color:#ff8a8a;font-size:11px">blocked</span>':""}${t.source==="files"&&!t.dur?' <span class="dim" style="font-size:11px">(length unknown: open it in Files once)</span>':""}</td>
+  <td>${t.tags.map(g=>`<span class="tag" style="${bl.has(g)?"border-color:#c55;color:#ff9a9a;text-decoration:line-through":r.disabled.includes(g)?"opacity:.45":""}">${esc(g)}</span>`).join("")}</td><td>${t.dur?dur(t.dur):"?"}</td><td>${t.by?esc(who(t.by)):'<span class="dim">-</span>'}</td><td><button class="btn sm" data-sedit="${esc(t.rid)}">Edit...</button></td></tr>`}).join("");
+ openDlg("RotRadio: all songs ("+r.tracks.length+")",`<div class="in" style="max-height:62vh;overflow:auto"><table><thead><tr><th>Song</th><th>Tags</th><th>Length</th><th>Added by</th><th></th></tr></thead><tbody>
+ <tr><td colspan="5" style="background:#1f1f1f"><b>Added to the radio</b> <span class="dim">(${up.length})</span></td></tr>${rows(up)||'<tr><td colspan="5" class="dim">None yet: use + Song.</td></tr>'}
+ <tr><td colspan="5" style="background:#1f1f1f"><b>From your project files</b> <span class="dim">(${lib.length}): audio files tagged <span class="tag">Music</span> in Files play too</span></td></tr>${rows(lib)||'<tr><td colspan="5" class="dim">None yet. In Files, give an audio file the Music tag and it joins the radio.</td></tr>'}
+ </tbody></table></div><div class="btns"><button class="btn" onclick="closeDlg()">Close</button></div>`,{wide:true});
+ document.querySelectorAll("[data-sedit]").forEach(b=>b.onclick=()=>songEditDlg(b.dataset.sedit))}
+function songEditDlg(rid){const t=X().radio.tracks.find(x=>x.rid===rid);if(!t)return;const lib=t.source==="files",min=lib?1:3;
+ openDlg("Edit song",`<label class="dim" for="seT">Title</label><input id="seT" class="field" style="width:100%" maxlength="120" value="${esc(t.title)}">
+ <label class="dim" for="seA">Artist</label><input id="seA" class="field" style="width:100%" maxlength="120" value="${esc(t.artist)}">
+ <label class="dim" for="seG">Radio tags (comma separated${lib?"":", at least 3"})</label><input id="seG" class="field" style="width:100%" value="${esc(t.tags.join(", "))}"><div class="dim" id="seN" style="font-size:12px"></div>
+ <div class="dim" style="font-size:12px">${lib?"From your files: ":"File: "}${esc(lib?t.file:short(t.file))} · ${t.dur?dur(t.dur):"length unknown"}${t.by?" · added by "+esc(who(t.by)):""}${lib?"<br>Removing it here only takes it off the radio; the file and its tags in Files stay as they are.":""}</div>
+ <div class="btns"><button class="btn" id="seDel">${lib?"Take off the radio":"Remove from radio"}</button><button class="btn b" id="seOk">Save</button><button class="btn" id="seBack">Back</button></div>`);
+ const cnt=()=>{const n=$("seG").value.split(",").map(s=>s.trim()).filter(Boolean).length;$("seN").textContent=n>=min?n+" tag"+(n>1?"s":"")+" ✓":"needs "+(min-n)+" more";$("seN").style.color=n>=min?"#7fd18f":"#ffb27a";$("seOk").disabled=n<min||!$("seT").value.trim()};
+ $("seG").oninput=cnt;$("seT").oninput=cnt;cnt();$("seBack").onclick=radioListDlg;
+ $("seOk").onclick=async()=>{try{await api("/api/x/radio_track_set",{rid,title:$("seT").value.trim(),artist:$("seA").value.trim(),tags:$("seG").value.split(",")});await tick();radioListDlg();toast("Saved")}catch(e){toast(e.message)}};
+ $("seDel").onclick=async()=>{if(!confirm("Take "+t.title+" off RotRadio for everyone?"+(lib?"":" (The file stays in _hub\\radio\\music.)")))return;try{await api("/api/x/radio_track_set",{rid,removed:true});await tick();radioListDlg()}catch(e){toast(e.message)}}}
+
+/* ---- feed lines for everything people do in the extras ---- */
+function xLogHtml(e){const u=`<b>${esc(who(e.user))}</b>`,x=X();const t=x.tasks.find(y=>y.tid===e.tid),tl=t?`<a data-task="${esc(t.tid)}">${esc(t.title)}</a>`:"a task";
+ const c=x.cal.find(y=>y.cid===e.cid),cl=c?`<a data-calev="${esc(c.cid)}">${esc(c.title)}</a>`:"an event";
+ const it=x.items.find(y=>y.iid===e.iid),f=x.feedback.find(y=>y.fid===e.fid),fl=f?`<a data-fb="${esc(f.fid)}">${esc(f.title)}</a>`:"a post";
+ const tr=(x.radio.tracks||[]).find(y=>y.rid===e.rid);
+ switch(e.kind){case"task_new":return `${u} made a task, ${tl}${(e.assignees||[]).length?" for "+e.assignees.map(a=>esc(who(a))).join(", "):""}${e.due?", due "+esc(fmtDate(e.due)):""}`;
+ case"task_set":return e.status==="done"?`${u} finished ${tl}`:e.status?`${u} set ${tl} to ${esc(TST[e.status]||e.status)}`:`${u} edited ${tl}`;
+ case"task_req":{const rq=t&&t.reqs[e.i];return `${u} ${e.done?"ticked off":"unticked"} ${rq?"“"+esc(rq.text)+"”":"a requirement"} on ${tl}`}
+ case"task_comment":return `${u} commented on ${tl}: “${emojify(esc(e.text))}”`;
+ case"cal_new":return `${u} added ${cl} to the calendar (${esc(fmtDate(e.date))})`;
+ case"cal_set":return e.deleted?`${u} deleted ${c?cl:"an event"} from the calendar`:`${u} changed ${cl}${e.date?" (now "+esc(fmtDate(e.date))+")":""}`;
+ case"cal_note":return `${u} added a note to ${cl}: “${emojify(esc(e.text))}”`;
+ case"inv_loc_new":return `${u} added a place to the inventory: <b>${esc(e.parent?locPath(e.lid)||e.name:e.name)}</b>`;
+ case"inv_item_new":return `${u} added <b>${esc(e.name)}</b> to the inventory`;
+ case"inv_item_set":{const nm=it?`<b>${esc(it.name)}</b>`:"an item";if(e.deleted)return `${u} deleted ${nm} from the inventory`;if("loc" in e)return `${u} moved ${nm} to <b>${esc(locPath(e.loc)||"no place")}</b>`;return `${u} edited ${nm} in the inventory`}
+ case"fb_new":return `${u} ${e.type==="bug"?"reported a bug":"suggested something"}: <a data-fb="${esc(e.fid)}">${esc(e.title)}</a>`;
+ case"fb_status":return `${u} marked ${fl} as ${esc(FST[e.status]||e.status)}`;
+ case"fb_comment":return `${u} replied to ${fl}: “${emojify(esc(e.text))}”`;
+ case"radio_track":return `${u} added <b>${esc(e.title)}</b> to RotRadio`;
+ case"radio_track_set":{const nm=tr?`<b>${esc(tr.title)}</b>`:"a song";return e.removed?`${u} took ${nm} off RotRadio`:e.title?`${u} renamed a song to <b>${esc(e.title)}</b>`:`${u} changed the tags on ${nm}`}
+ case"radio_cfg":return `${u} changed which tags RotRadio plays${(e.blocked||[]).length?" ("+e.blocked.length+" blocked)":""}`;
+ case"radio_groups":return (e.groups||[]).length?`${u}'s AI sorted the radio tags into ${e.groups.length} groups`:null}
+ if(/^(task_|cal_|inv_|fb_|radio_)/.test(e.kind||""))return null;return undefined}
+document.addEventListener("click",e=>{const a=e.target.closest("#feed [data-calev]");if(!a)return;e.preventDefault();calViewDlg(a.dataset.calev)});
 
 /* ---------------- main loop ---------------- */
 function renderAll(force){if(!S||!S.configured)return;renderProjects();renderForYou();renderTabs();renderCenter(force);renderPeople();renderStatus();renderFeed(false);renderBanners();renderRadio();renderAV();

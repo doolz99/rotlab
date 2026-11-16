@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "5.5"
+HUB_VERSION = "5.6"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -3028,12 +3028,75 @@ STATE = {"vegas": None, "syncthing": {"ok": False, "error": "starting…"}, "ui_
 STATE_LOCK = threading.Lock()
 
 
+APP_NAMES = {"chrome": "Chrome", "msedge": "Edge", "firefox": "Firefox", "opera": "Opera", "brave": "Brave", "discord": "Discord",
+             "spotify": "Spotify", "code": "VS Code", "explorer": "File Explorer", "steam": "Steam", "obs64": "OBS",
+             "vegas": "VEGAS", "winword": "Word", "excel": "Excel", "powerpnt": "PowerPoint", "notepad": "Notepad",
+             "photoshop": "Photoshop", "krita": "Krita", "blender": "Blender", "fl64": "FL Studio", "vlc": "VLC",
+             "windowsterminal": "Terminal", "slack": "Slack", "teams": "Teams", "ms-teams": "Teams", "whatsapp": "WhatsApp"}
+
+
+def detect_focus():
+    """The window this PC is using right now (only when you've switched on sharing it). Windows only."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+    u32, k32 = ctypes.windll.user32, ctypes.windll.kernel32
+    lii = (ctypes.c_uint * 2)(8, 0)
+    idle = None
+    if u32.GetLastInputInfo(ctypes.byref(lii)):
+        idle = (k32.GetTickCount() - lii[1]) / 1000.0
+    hwnd = u32.GetForegroundWindow()
+    if not hwnd:
+        return {"app": "", "title": "", "idle": idle}
+    n = u32.GetWindowTextLengthW(hwnd)
+    buf = ctypes.create_unicode_buffer(n + 1)
+    u32.GetWindowTextW(hwnd, buf, n + 1)
+    pid = wintypes.DWORD()
+    u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    exe = ""
+    hp = k32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if hp:
+        size = wintypes.DWORD(1024)
+        pbuf = ctypes.create_unicode_buffer(1024)
+        if k32.QueryFullProcessImageNameW(hp, 0, pbuf, ctypes.byref(size)):
+            exe = os.path.splitext(os.path.basename(pbuf.value))[0]
+        k32.CloseHandle(hp)
+    return {"app": APP_NAMES.get(exe.lower(), exe[:1].upper() + exe[1:] if exe else ""), "title": buf.value, "idle": idle}
+
+
+def focus_text(f, mode):
+    if not f:
+        return None
+    if f.get("idle") is not None and f["idle"] > 600:
+        return "away"
+    app, title = f.get("app") or "", re.sub(r"\s+", " ", f.get("title") or "").strip()
+    if not app or "RotLab" in title:
+        return None
+    if mode == "title" and title:
+        for suffix in (" - Google Chrome", " - Microsoft​ Edge", " - Microsoft Edge", " — Mozilla Firefox", " - Mozilla Firefox", " - Brave", " - Opera"):
+            if title.endswith(suffix):
+                title = title[:-len(suffix)]
+        title = re.sub(r" and \d+ more pages?$", "", title)
+        return ("using %s: %s" % (app, title))[:90] if title and title.lower() != app.lower() else "using " + app
+    return "using " + app
+
+
 def compute_status(vegas, ui_seen, view):
     if vegas:
         proj = vegas.get("project") or "a project"
         return {"kind": "editing", "text": "in %s, %s" % (vegas.get("app", "VEGAS"), proj), "project": vegas.get("project") or ""}
     if now() - ui_seen < 90:
         return {"kind": "hub", "text": "browsing " + (view or "the hub")}
+    mode = CONFIG.get("share_focus", "off")
+    if mode in ("app", "title"):
+        try:
+            t = focus_text(detect_focus(), mode)
+        except Exception as e:
+            t = None
+            print("focus:", repr(e))
+        if t:
+            return {"kind": "away" if t == "away" else "online", "text": t}
     return {"kind": "online", "text": "online"}
 
 
@@ -3151,8 +3214,7 @@ RADIO_EXT = {".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm"}
 RADIO_SETTLE = 45      # seconds a new track waits before it can be picked (so it has synced to the other PCs)
 RADIO_AHEAD = 150      # the DJ PC keeps this many seconds of schedule ahead
 TASK_STATUS = ["todo", "doing", "done", "cancelled"]
-X_QUIET = {"part_set", "task_req", "task_del", "cal_set", "inv_loc_new", "inv_loc_set", "inv_item_set", "fb_status",
-           "fb_comment", "fb_vote", "fb_del", "radio_track_set"}
+X_QUIET = {"part_set", "task_del", "inv_loc_set", "fb_vote", "fb_del"}
 FB_STATUS = ["open", "planned", "done", "wontfix"]
 for _d in (RADIO_DIR, RADIO_MUSIC):
     os.makedirs(_d, exist_ok=True)
@@ -3196,7 +3258,8 @@ def x_state():
         if X_CACHE["sig"] == sig and X_CACHE["state"] is not None:
             return X_CACHE["state"]
     tasks, cal, locs, items, fb, tracks = {}, {}, {}, {}, {}, {}
-    radio_cfg = {"disabled": [], "by": None, "ts": 0}
+    radio_cfg = {"disabled": [], "blocked": [], "by": None, "ts": 0}
+    lib_over = {}
     radio_groups = {"groups": [], "by": None, "ts": 0, "model": ""}
     for e in ws_events():
         k, u, ts = e.get("kind") or "", e.get("user"), e.get("ts", 0)
@@ -3278,12 +3341,17 @@ def x_state():
             tracks[e["rid"]] = {"rid": e["rid"], "file": e["file"], "title": e.get("title") or os.path.basename(e["file"]),
                                 "artist": e.get("artist", ""), "tags": e.get("tags", []), "dur": float(e.get("dur") or 0),
                                 "by": u, "ts": ts, "removed": False}
+        elif k == "radio_track_set" and str(e.get("rid", "")).startswith("lib-"):
+            o = lib_over.setdefault(e["rid"], {})
+            for f in ("title", "artist", "tags", "removed"):
+                if f in e:
+                    o[f] = e[f]
         elif k == "radio_track_set" and e.get("rid") in tracks:
             for f in ("title", "artist", "tags", "removed"):
                 if f in e:
                     tracks[e["rid"]][f] = e[f]
         elif k == "radio_cfg":
-            radio_cfg = {"disabled": e.get("disabled", []), "by": u, "ts": ts}
+            radio_cfg = {"disabled": e.get("disabled", []), "blocked": e.get("blocked", radio_cfg.get("blocked", [])), "by": u, "ts": ts}
         elif k == "radio_groups" and isinstance(e.get("groups"), list):
             radio_groups = {"groups": e["groups"], "by": u, "ts": ts, "model": e.get("model", "")}
     state = {"tasks": {k: v for k, v in tasks.items() if not v["deleted"]},
@@ -3292,7 +3360,7 @@ def x_state():
              "items": {k: v for k, v in items.items() if not v["deleted"]},
              "feedback": {k: v for k, v in fb.items() if not v["deleted"]},
              "tracks": {k: v for k, v in tracks.items() if not v["removed"]},
-             "radio_cfg": radio_cfg, "radio_groups": radio_groups}
+             "radio_cfg": radio_cfg, "radio_groups": radio_groups, "lib_over": lib_over}
     with WS_LOCK:
         X_CACHE["sig"], X_CACHE["state"] = sig, state
     return state
@@ -3428,10 +3496,49 @@ def ai_tick():
 RADIO = {"recent": [], "cfg_sig": None}
 
 
+LIB_SONGS = {"ts": 0, "list": []}
+
+
+def radio_lib_tracks(st_=None):
+    """Audio files in the synced project folders that are tagged "Music" in Files play on the radio too.
+    Their radio tags are the file's tags; the length comes from the preview the window made."""
+    if now() - LIB_SONGS["ts"] > 15:
+        out = []
+        try:
+            _, tags = notes_index()
+            who = added_by_index()
+        except Exception:
+            tags, who = {}, {}
+        for path, tg in tags.items():
+            low = [t.strip().lower() for t in tg if t.strip()]
+            if "music" not in low or "don't use" in low or "dont use" in low or path.startswith("_hub/"):
+                continue
+            if os.path.splitext(path)[1].lower() not in RADIO_EXT or media_of(path) != "Audio":
+                continue
+            dur = (preview_meta(path) or {}).get("duration")
+            out.append({"rid": "lib-" + hashlib.md5(path.encode("utf-8")).hexdigest()[:10], "file": path,
+                        "title": os.path.splitext(os.path.basename(path))[0], "artist": "", "tags": low,
+                        "dur": float(dur) if isinstance(dur, (int, float)) else 0.0, "by": who.get(path) or "",
+                        "ts": 0, "removed": False, "source": "files"})
+        LIB_SONGS.update(ts=now(), list=out)
+    st_ = st_ or x_state()
+    res = []
+    for t in LIB_SONGS["list"]:
+        t = dict(t, **st_["lib_over"].get(t["rid"], {}))
+        if not t.get("removed"):
+            res.append(t)
+    return res
+
+
+def radio_all_tracks(st_=None):
+    st_ = st_ or x_state()
+    return list(st_["tracks"].values()) + radio_lib_tracks(st_)
+
+
 def radio_tags(st_=None):
     st_ = st_ or x_state()
     counts = {}
-    for t in st_["tracks"].values():
+    for t in radio_all_tracks(st_):
         for g in t["tags"]:
             counts[g] = counts.get(g, 0) + 1
     return counts
@@ -3439,10 +3546,13 @@ def radio_tags(st_=None):
 
 def radio_eligible(st_):
     disabled = set(st_["radio_cfg"]["disabled"])
+    blocked = set(st_["radio_cfg"].get("blocked", []))
     out = []
-    for t in st_["tracks"].values():
+    for t in radio_all_tracks(st_):
         if t["dur"] < 5 or now() - t["ts"] < RADIO_SETTLE:
             continue
+        if any(g in blocked for g in t["tags"]):
+            continue  # a blocked tag stops a song completely
         if not any(g not in disabled for g in t["tags"]):
             continue
         try:
@@ -3498,7 +3608,7 @@ def radio_tick():
     queue = [q for q in (base.get("queue") or []) if q.get("start", 0) + q.get("dur", 0) > now()]
     elig = radio_eligible(st_)
     ids = {t["rid"] for t in elig}
-    cfg_sig = hashlib.md5(json.dumps([sorted(st_["radio_cfg"]["disabled"]), sorted(ids)]).encode()).hexdigest()
+    cfg_sig = hashlib.md5(json.dumps([sorted(st_["radio_cfg"]["disabled"]), sorted(st_["radio_cfg"].get("blocked", [])), sorted(ids)]).encode()).hexdigest()
     changed = False
     if cfg_sig != RADIO["cfg_sig"]:
         # tags or tracks changed: keep the song that's playing, choose the rest again
@@ -3506,7 +3616,8 @@ def radio_tick():
             keep = [q for q in queue if q["start"] <= now()][:1]
             if len(keep) != len(queue):
                 queue, changed = keep, True
-            if queue and queue[0]["rid"] not in ids and queue[0]["rid"] not in st_["tracks"]:
+            if queue and queue[0]["rid"] not in ids and (queue[0]["rid"] not in {t["rid"] for t in radio_all_tracks(st_)}
+                                                         or any(g in st_["radio_cfg"].get("blocked", []) for g in queue[0].get("tags", []))):
                 queue, changed = [], True
         RADIO["cfg_sig"] = cfg_sig
     import random
@@ -3535,13 +3646,15 @@ def radio_view():
             x["here"] = os.path.isfile(safe_path(x["file"]))
         except ValueError:
             x["here"] = False
-    tracks = [dict(t) for t in sorted(st_["tracks"].values(), key=lambda t: -t["ts"])]
+    tracks = [dict(t) for t in sorted(st_["tracks"].values(), key=lambda t: -t["ts"])] + \
+        [dict(t) for t in sorted(radio_lib_tracks(st_), key=lambda t: t["title"].lower())]
     for t in tracks:
         try:
             t["here"] = os.path.isfile(safe_path(t["file"]))
         except ValueError:
             t["here"] = False
     return {"queue": q[:6], "dj": radio_dj(), "tags": radio_tags(st_), "disabled": st_["radio_cfg"]["disabled"],
+            "blocked": st_["radio_cfg"].get("blocked", []),
             "cfg_by": st_["radio_cfg"]["by"], "tracks": tracks, "groups": st_["radio_groups"], "ai_tags": AI["state"], "playable": len(radio_eligible(st_)),
             "folder": rel(RADIO_MUSIC)}
 
@@ -3637,6 +3750,11 @@ def x_post(path, b):
         if text:
             ws_add("cal_note", cid=b["cid"], text=text)
         return 200, {"ok": True}
+    if p == "share_focus":
+        mode = b.get("mode") if b.get("mode") in ("off", "app", "title") else "off"
+        CONFIG["share_focus"] = mode
+        save_config()
+        return 200, {"ok": True, "mode": mode}
     if p == "ai_get":
         return 200, ai_public()
     if p == "ai_set":
@@ -3759,7 +3877,7 @@ def x_post(path, b):
         d = {}
         if "tags" in b:
             tags = _tags(b["tags"])
-            if len(tags) < 3:
+            if len(tags) < (1 if str(rid).startswith("lib-") else 3):
                 raise ValueError("A song needs at least 3 tags")
             d["tags"] = tags
         for f in ("title", "artist"):
@@ -3770,7 +3888,8 @@ def x_post(path, b):
         ws_add("radio_track_set", rid=rid, **d)
         return 200, {"ok": True}
     if p == "radio_cfg":
-        ws_add("radio_cfg", disabled=_tags(b.get("disabled"), 500))
+        ws_add("radio_cfg", disabled=_tags(b.get("disabled"), 500),
+               blocked=_tags(b.get("blocked") if "blocked" in b else st_["radio_cfg"].get("blocked", []), 500))
         return 200, {"ok": True}
     return 404, {"error": "unknown"}
 
@@ -3870,7 +3989,8 @@ def build_state():
         "settings": {"auto_sort": CONFIG.get("auto_sort", True), "date_folders": CONFIG.get("date_folders", True),
                      "autostart": get_autostart(), "windows": os.name == "nt",
                      "native_window": has_native_window(), "folders": CONFIG.get("folders"),
-                     "github_updates": CONFIG.get("github_updates", True), "live": CONFIG.get("live", True), "storage": storage_default()},
+                     "github_updates": CONFIG.get("github_updates", True), "live": CONFIG.get("live", True), "storage": storage_default(),
+                     "share_focus": CONFIG.get("share_focus", "off")},
         "live": live_info(), "x": x_view(),
         "storage": storage_state(),
         "github": {"latest": GH["latest"], "error": GH["error"], "checked": GH["checked"], "busy": GH["busy"]},
@@ -4110,6 +4230,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_file(f)
             else:
                 self._json(404, {"error": "no preview"})
+        elif u.path.startswith("/emoji/") and re.match(r"^/emoji/emoji-[a-z]+\.webp$", u.path):
+            f = os.path.join(APP_DIR, u.path[7:])
+            if os.path.isfile(f):
+                self.send_response(200)
+                self.send_header("Content-Type", "image/webp")
+                self.send_header("Cache-Control", "max-age=86400")
+                data = open(f, "rb").read()
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self._json(404, {"error": "no such emoji"})
         elif u.path == "/media":
             try:
                 self._send_file(safe_path(parse_qs(u.query).get("path", [""])[0]))
