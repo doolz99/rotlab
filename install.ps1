@@ -1,6 +1,6 @@
 # RotLab one-line installer
 #   Paste this into PowerShell:
-#     irm https://raw.githubusercontent.com/normanbatesbmotel-boop/rotlab/main/install.ps1 | iex
+#     irm https://raw.githubusercontent.com/doolz99/rotlab/main/install.ps1 | iex
 #
 # It downloads a tested RotLab version (the tag below) into this PC's own app folder
 # (%LOCALAPPDATA%\RotLab\app, outside the synced project folder, so nobody you sync with can change the
@@ -27,7 +27,7 @@ $zip = Join-Path $env:TEMP 'rotlab-main.zip'
 $tmp = Join-Path $env:TEMP ('rotlab-' + [guid]::NewGuid().ToString('N'))
 
 Write-Host '  Downloading RotLab...'
-Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/normanbatesbmotel-boop/rotlab/archive/$version.zip" -OutFile $zip
+Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/doolz99/rotlab/archive/$version.zip" -OutFile $zip
 
 Write-Host '  Unpacking...'
 Expand-Archive -Path $zip -DestinationPath $tmp -Force

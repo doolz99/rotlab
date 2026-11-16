@@ -1,6 +1,5 @@
 # RotLab
 
-RotLab now lives at **[normanbatesbmotel-boop/rotlab](https://github.com/normanbatesbmotel-boop/rotlab)**. It started as [doolz99/rotlab](https://github.com/doolz99/rotlab), which now hands updates over to it. Everyone you sync with should be on 5.4 or newer, so they see the same tasks, calendar, inventory, radio and video.
 
 ## What's new in 5.x
 
@@ -25,7 +24,7 @@ Each invite file works **once**: it carries a one-time secret, and your PC only 
 Open **PowerShell** (Start menu → type `powershell` → Enter), paste this line and press Enter:
 
 ```powershell
-irm https://raw.githubusercontent.com/normanbatesbmotel-boop/rotlab/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/doolz99/rotlab/main/install.ps1 | iex
 ```
 
 That downloads a tested version of RotLab into this PC's own app folder (`%LOCALAPPDATA%\RotLab\app`) and starts the setup. The project folder is `C:\VegasProject`. The program is kept outside it on purpose, so nobody you sync with can change the code that runs on your PC.

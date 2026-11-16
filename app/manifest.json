@@ -1,5 +1,5 @@
 {
- "version": "5.5",
+ "version": "5.6",
  "files": [
   "ui.html",
   "phone.html",
@@ -9,5 +9,5 @@
   "README.md",
   "hub.py"
  ],
- "notes": "Inventory: sub-places and a proper owner picker. Rename songs. Calendar events open with notes everyone can add. Radio tags in groups, sorted by AI (File > AI automation, your own API key). The version in the corner now matches what's installed."
+ "notes": "Everything from 5.5 (Tasks, Calendar, Inventory, RotRadio, calls...), and RotLab now gets its updates from doolz99/rotlab again, the one repo you both work in."
 }

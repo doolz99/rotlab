@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "5.5"
+HUB_VERSION = "5.6"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -600,7 +600,7 @@ def make_invite_file():
         "echo   Just type your name when the setup window asks, and click Install.",
         "echo.",
         'set "ROTLAB_INVITE=%s"' % code,
-        'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/normanbatesbmotel-boop/rotlab/main/install.ps1 | iex"',
+        'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/doolz99/rotlab/main/install.ps1 | iex"',
         "if errorlevel 1 pause",
         ""])
     folder = os.path.join(os.path.expanduser("~"), "Downloads")
@@ -2549,7 +2549,7 @@ def storage_state():
 # Openverse: Creative Commons images + audio (no key).  Poly Haven: CC0 HDRIs, textures, models (no key).
 OPENVERSE = os.environ.get("HUB_OPENVERSE", "https://api.openverse.org/v1")
 POLYHAVEN = os.environ.get("HUB_POLYHAVEN", "https://api.polyhaven.com")
-WEB_UA = "RotLab/%s (+https://github.com/normanbatesbmotel-boop/rotlab)" % HUB_VERSION
+WEB_UA = "RotLab/%s (+https://github.com/doolz99/rotlab)" % HUB_VERSION
 PIXABAY = os.environ.get("HUB_PIXABAY", "https://pixabay.com/api")
 GIPHY = os.environ.get("HUB_GIPHY", "https://api.giphy.com/v1")
 WEB_CACHE = {}  # url -> (ts, data); Pixabay asks for results to be cached for 24 hours
@@ -2941,7 +2941,7 @@ def restart(with_window, script=None):
 # Every few hours, look at the app's GitHub repo. If it has a newer version, download it to a staging
 # folder on this PC and say so; nothing is installed until you click Install. (Sync never carries the
 # program between PCs.)
-GITHUB_RAW = os.environ.get("HUB_GH_RAW", "https://raw.githubusercontent.com/normanbatesbmotel-boop/rotlab/main/app/")
+GITHUB_RAW = os.environ.get("HUB_GH_RAW", "https://raw.githubusercontent.com/doolz99/rotlab/main/app/")
 GH = {"checked": 0, "latest": None, "error": None, "busy": False}
 STAGE_DIR = os.path.join(os.path.dirname(config_file()), "update")
 
