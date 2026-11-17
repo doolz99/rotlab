@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "5.9"
+HUB_VERSION = "6.0"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -278,7 +278,12 @@ def _st_request(method, url, key, body=None, timeout=5):
         return json.loads(raw) if raw.strip() else None
 
 
+TEST_COPY = bool(os.environ.get("HUB_TEST"))  # the "RotLab TEST" sandbox: no sync, no updates, no phone
+
+
 def st(method, path, body=None, timeout=5):
+    if TEST_COPY:
+        raise RuntimeError("sync is off in the test copy")
     if not ST["url"]:
         raise RuntimeError("sync not running")
     return _st_request(method, ST["url"].rstrip("/") + path, ST["key"], body, timeout)
@@ -356,6 +361,8 @@ def start_builtin(wait=25):
 
 def resolve_sync():
     """Pick which Syncthing to talk to. Safe to call repeatedly."""
+    if TEST_COPY:
+        return None
     if ST["mode"] in ("external", "builtin") and _alive(ST["url"], ST["key"]):
         return ST["mode"]
     ext = find_external()
@@ -2902,12 +2909,16 @@ def read_version(path):
 def check_for_update():
     """True when a newer version from GitHub is downloaded and waiting for you to install it."""
     st_ = read_json(os.path.join(STAGE_DIR, "manifest.json"), None)
+    if st_ and str(st_.get("version")) in skipped_versions():
+        shutil.rmtree(STAGE_DIR, ignore_errors=True)  # skipped here, or rolled back by someone
+        st_ = None
     if st_ and _vtuple(st_.get("version", "0")) > _vtuple(HUB_VERSION) and os.path.isfile(os.path.join(STAGE_DIR, "hub.py")):
-        UPDATE.update({"pending": True, "version": st_.get("version"), "notes": st_.get("notes") or "", "on_disk": False})
+        UPDATE.update({"pending": True, "version": st_.get("version"), "notes": st_.get("notes") or "", "on_disk": False,
+                       "trial": bool(st_.get("trial")), "by": st_.get("by") or ""})
         return True
     if UPDATE.get("on_disk"):
         return False  # disk_version_check owns this one
-    UPDATE.update({"pending": False, "version": None, "notes": ""})
+    UPDATE.update({"pending": False, "version": None, "notes": "", "trial": False, "by": ""})
     return False
 
 
@@ -2974,7 +2985,7 @@ def restart(with_window, script=None):
 # folder on this PC and say so; nothing is installed until you click Install. (Sync never carries the
 # program between PCs.)
 GITHUB_RAW = os.environ.get("HUB_GH_RAW", "https://raw.githubusercontent.com/normanbatesbmotel-boop/rotlab/main/app/")
-GH = {"checked": 0, "latest": None, "error": None, "busy": False}
+GH = {"checked": 0, "latest": None, "error": None, "busy": False, "manifest": {}}
 STAGE_DIR = os.path.join(os.path.dirname(config_file()), "update")
 
 
@@ -3001,9 +3012,11 @@ def backup_app():
 
 
 def github_check(force=False):
-    if GH["busy"] or not (CONFIG.get("github_updates", True) or force):
+    if TEST_COPY or GH["busy"] or not (CONFIG.get("github_updates", True) or force):
         return
-    if not force and now() - GH["checked"] < 3 * 3600:
+    # every 3 hours; every 2 minutes while someone is developing or a trial is out, so trials arrive quickly
+    every = 120 if (dev_state().get("user") or running_trial()) else 3 * 3600
+    if not force and now() - GH["checked"] < every:
         return
     GH["busy"], GH["checked"] = True, now()
     try:
@@ -3011,7 +3024,8 @@ def github_check(force=False):
         with urllib.request.urlopen(req, timeout=20) as r:
             man = json.loads(r.read().decode("utf-8"))
         GH["latest"], GH["error"] = man.get("version"), None
-        if _vtuple(man.get("version", "0")) <= _vtuple(HUB_VERSION):
+        GH["manifest"] = {k: man.get(k) for k in ("version", "trial", "by", "notes")}
+        if _vtuple(man.get("version", "0")) <= _vtuple(HUB_VERSION) or str(man.get("version")) in skipped_versions():
             return
         staged = read_json(os.path.join(STAGE_DIR, "manifest.json"), {}) or {}
         if staged.get("version") == man.get("version") and os.path.isfile(os.path.join(STAGE_DIR, "hub.py")):
@@ -3177,6 +3191,13 @@ def monitor():
                 disk_version_check()
             if tick % 6 == 0:
                 check_for_update()  # only tells you; you choose when to install
+            if tick % 2 == 1 and not TEST_COPY:
+                try:
+                    trial_tick()
+                    dev_tick()
+                    dev_bell_tick()
+                except Exception as e:
+                    print("dev/trial:", repr(e))
             if tick % 10 == 4:
                 threading.Thread(target=shell_previews, daemon=True).start()
             if PHONE["server"] and now() > PHONE.get("until", 0):
@@ -3245,7 +3266,8 @@ RADIO_EXT = {".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm"}
 RADIO_SETTLE = 45      # seconds a new track waits before it can be picked (so it has synced to the other PCs)
 RADIO_AHEAD = 150      # the DJ PC keeps this many seconds of schedule ahead
 TASK_STATUS = ["todo", "doing", "done", "cancelled"]
-X_QUIET = {"part_set", "task_del", "inv_loc_set", "fb_vote", "fb_del", "user_color", "sfx_set"}
+X_QUIET = {"part_set", "task_del", "inv_loc_set", "fb_vote", "fb_del", "user_color", "sfx_set",
+           "dev_note", "dev_progress", "dev_stage"}
 FB_STATUS = ["open", "planned", "done", "wontfix"]
 for _d in (RADIO_DIR, RADIO_MUSIC):
     os.makedirs(_d, exist_ok=True)
@@ -4187,10 +4209,373 @@ def build_state():
                      "native_window": has_native_window(), "folders": CONFIG.get("folders"),
                      "github_updates": CONFIG.get("github_updates", True), "live": CONFIG.get("live", True), "storage": storage_default(),
                      "share_focus": CONFIG.get("share_focus", "off")},
-        "live": live_info(), "x": x_view(),
+        "live": live_info(), "x": x_view(), "dev": dev_view(),
         "storage": storage_state(),
         "github": {"latest": GH["latest"], "error": GH["error"], "checked": GH["checked"], "busy": GH["busy"]},
     }
+
+
+
+# ---------------------------------------------------------------- developing together
+# Test copy: a second RotLab ("RotLab TEST") that runs the version being worked on, from DEV_DIR\app, with its
+# own pretend project and settings. It never syncs, never updates and never touches the real project.
+DEV_DIR = os.environ.get("ROTLAB_DEV_DIR") or CONFIG.get("dev_dir") or (r"C:\RotLabDev" if os.name == "nt" else os.path.join(os.path.expanduser("~"), "RotLabDev"))
+DEV_APP = os.path.join(DEV_DIR, "app")
+DEV_PROJECT = os.path.join(DEV_DIR, "project")
+DEV_SETTINGS = os.path.join(DEV_DIR, "settings")
+DEV_NOTE = os.path.join(DEV_DIR, "dev-note.txt")
+TEST_PORT = 8790
+TEST_DATA_DIRS = ("ws", "chat", "notes", "activity", "tasks")
+
+
+def test_running():
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:%d/api/ping" % TEST_PORT, timeout=1.5) as r:
+            return json.loads(r.read().decode("utf-8")).get("version") or "?"
+    except Exception:
+        return None
+
+
+def dev_setup(reset=False):
+    """Make the test copy's folders. The code starts as a copy of the version installed on this PC."""
+    if reset and os.path.isdir(DEV_APP):
+        shutil.rmtree(DEV_APP, ignore_errors=True)
+    if not os.path.isfile(os.path.join(DEV_APP, "hub.py")):
+        os.makedirs(DEV_APP, exist_ok=True)
+        for f in os.listdir(APP_DIR):
+            fp = os.path.join(APP_DIR, f)
+            if os.path.isfile(fp) and not f.endswith((".tmp", ".pyc")):
+                shutil.copy2(fp, os.path.join(DEV_APP, f))
+    os.makedirs(os.path.join(DEV_PROJECT, "Shared"), exist_ok=True)
+    cfgd = os.path.join(DEV_SETTINGS, "VegasHub")
+    os.makedirs(cfgd, exist_ok=True)
+    cfg = read_json(os.path.join(cfgd, "config.json"), {}) or {}
+    cfg.update({"name": me() or cfg.get("name") or "me", "root": DEV_PROJECT, "github_updates": False,
+                "live": False, "phone_uploads": False, "share_focus": CONFIG.get("share_focus", "off")})
+    write_json_atomic(os.path.join(cfgd, "config.json"), cfg)
+    if not os.path.isfile(DEV_NOTE):
+        with open(DEV_NOTE, "w", encoding="utf-8") as fh:
+            fh.write("")
+    return {"dir": DEV_DIR}
+
+
+def dev_copy_data():
+    """Copy this PC's tasks, calendar, chat, notes... into the test copy so tweaks look realistic. One way only."""
+    copied = 0
+    for d in TEST_DATA_DIRS:
+        src, dst = os.path.join(HUB_DIR, d), os.path.join(DEV_PROJECT, "_hub", d)
+        if not os.path.isdir(src):
+            continue
+        os.makedirs(dst, exist_ok=True)
+        for f in os.listdir(src):
+            fp = os.path.join(src, f)
+            if os.path.isfile(fp) and os.path.getsize(fp) < 20 * 1024 * 1024 and "sync-conflict" not in f:
+                shutil.copy2(fp, os.path.join(dst, f))
+                copied += 1
+    return copied
+
+
+def dev_open():
+    dev_setup()
+    exe = sys.executable
+    if os.name == "nt" and exe.lower().endswith("python.exe") and os.path.isfile(exe[:-10] + "pythonw.exe"):
+        exe = exe[:-10] + "pythonw.exe"
+    env = dict(os.environ, HUB_TEST="1", HUB_PORT=str(TEST_PORT), APPDATA=DEV_SETTINGS, HUB_ROOT=DEV_PROJECT,
+               HUB_NO_MIGRATE="1", ROTLAB_DEV_DIR=DEV_DIR)
+    env.pop("HUB_GH_RAW", None)
+    flags = 0x00000008 if os.name == "nt" else 0
+    subprocess.Popen([exe, os.path.join(DEV_APP, "hub.py")], cwd=DEV_APP, env=env, creationflags=flags)
+    if dev_state().get("user") == me():
+        dev_post_stage("trying it in the test copy")
+
+
+TEST_ERR = {"msg": ""}
+
+
+def test_watch():
+    """In the test copy: restart by itself when hub.py changes (the page reloads itself when ui.html changes)."""
+    def mt():
+        try:
+            return os.path.getmtime(SELF)
+        except OSError:
+            return 0
+    last = mt()
+    while True:
+        time.sleep(1)
+        m = mt()
+        if m == last:
+            continue
+        last = m
+        time.sleep(0.4)
+        try:
+            py_compile.compile(SELF, cfile=os.path.join(os.path.dirname(config_file()), "check.pyc"), doraise=True)
+        except Exception as e:
+            TEST_ERR["msg"] = str(e)[-400:]
+            print("test copy: hub.py has an error, still running the last good one:", TEST_ERR["msg"])
+            continue
+        with STATE_LOCK:
+            seen = now() - STATE["ui_seen"] < 300
+        restart(with_window=seen)
+
+
+# Trials: an update published with "trial": true in manifest.json. Everyone installs it like any update; then
+# either person clicks Keep it or Roll back. Roll back puts back the copy each PC kept of its previous version
+# (nothing is downloaded and no code travels through sync) and that version is never offered again.
+DEV_EVS = {"sig": None, "evs": []}
+
+
+def dev_events():
+    """The shared events in time order (cached until a sync brings something new)."""
+    sig = _ws_sig()
+    if DEV_EVS["sig"] != sig:
+        DEV_EVS["evs"] = sorted((e for e in ws_events() if str(e.get("kind", "")).startswith(("dev_", "trial_"))),
+                                key=lambda e: e.get("ts", 0))
+        DEV_EVS["sig"] = sig
+    return DEV_EVS["evs"]
+
+
+def running_trial():
+    m = read_json(os.path.join(APP_DIR, "manifest.json"), {}) or {}
+    if m.get("trial") and str(m.get("version")) == HUB_VERSION:
+        return {"version": HUB_VERSION, "by": m.get("by") or "", "notes": m.get("notes") or ""}
+    return None
+
+
+def trial_verdicts():
+    out = {}
+    for e in dev_events():
+        if e.get("kind") in ("trial_keep", "trial_back") and e.get("v"):
+            out[str(e["v"])] = {"verdict": "kept" if e["kind"] == "trial_keep" else "rolled_back",
+                                "user": e.get("user"), "ts": e.get("ts", 0)}
+    return out
+
+
+def skipped_versions():
+    sk = set(str(v) for v in (CONFIG.get("skip_versions") or []))
+    sk |= {v for v, t in trial_verdicts().items() if t["verdict"] == "rolled_back"}
+    return sk
+
+
+def app_backups():
+    root = os.path.join(os.path.dirname(config_file()), "app-backup")
+    out = []
+    try:
+        for d in os.listdir(root):
+            if d.startswith("v") and os.path.isfile(os.path.join(root, d, "hub.py")) and d[1:] != HUB_VERSION:
+                out.append({"version": d[1:], "ts": os.path.getmtime(os.path.join(root, d))})
+    except OSError:
+        pass
+    return sorted(out, key=lambda b: _vtuple(b["version"]), reverse=True)
+
+
+def rollback_to(version, skip_current=True):
+    """Put back a version kept on this PC. The one we're leaving is kept too, and (normally) skipped from now on."""
+    version = str(version)
+    src = os.path.join(os.path.dirname(config_file()), "app-backup", "v" + version)
+    if not re.match(r"^[0-9][0-9.]*$", version) or not os.path.isfile(os.path.join(src, "hub.py")):
+        raise ValueError("That version isn't kept on this PC")
+    py_compile.compile(os.path.join(src, "hub.py"), cfile=os.path.join(os.path.dirname(config_file()), "check.pyc"), doraise=True)
+    backup_app()
+    for f in sorted(os.listdir(src), key=lambda x: x == "hub.py"):
+        fp = os.path.join(src, f)
+        if os.path.isfile(fp):
+            shutil.copyfile(fp, os.path.join(APP_DIR, f) + ".tmp")
+            os.replace(os.path.join(APP_DIR, f) + ".tmp", os.path.join(APP_DIR, f))
+    if skip_current:
+        sk = [v for v in (CONFIG.get("skip_versions") or []) if v != HUB_VERSION] + [HUB_VERSION]
+        CONFIG["skip_versions"] = sk[-20:]
+        save_config()
+    shutil.rmtree(STAGE_DIR, ignore_errors=True)
+    print("went back to version", version)
+
+
+def previous_version():
+    olds = [b for b in app_backups() if _vtuple(b["version"]) < _vtuple(HUB_VERSION)]
+    return olds[0]["version"] if olds else None
+
+
+def trial_tick():
+    """Someone clicked Roll back on the trial this PC is running: go back to the version this PC had before."""
+    t = running_trial()
+    if not t:
+        return
+    v = trial_verdicts().get(HUB_VERSION)
+    if not v or v["verdict"] != "rolled_back":
+        return
+    prev = previous_version()
+    if not prev:
+        print("trial %s was rolled back, but no older version is kept on this PC" % HUB_VERSION)
+        return
+    rollback_to(prev)
+    with STATE_LOCK:
+        seen = now() - STATE["ui_seen"] < 300
+    restart(with_window=seen)
+
+
+# The developing sign: who is changing RotLab right now, what, and how it's going. Shared like chat.
+DEV_WATCH = {"sig": None, "changes": 0, "last": 0, "sent": 0, "note_m": None, "sent_changes": 0}
+
+
+def dev_state():
+    d = {}
+    for e in dev_events():
+        k, u, ts = e.get("kind"), e.get("user"), e.get("ts", 0)
+        if k == "dev_start":
+            d = {"user": u, "what": e.get("what") or "", "since": ts, "notes": [], "changes": 0, "last": ts,
+                 "stage": "started"}
+        elif not d:
+            continue
+        elif k in ("dev_done", "dev_clear"):
+            d = {}
+        elif k in ("trial_keep", "trial_back") and ts >= d.get("since", 0):
+            d = {}
+        elif u == d.get("user"):
+            if k == "dev_note" and e.get("text"):
+                d["notes"] = (d["notes"] + [{"ts": ts, "text": e["text"]}])[-12:]
+                d["last"] = max(d["last"], ts)
+            elif k == "dev_progress":
+                d["changes"] = max(d["changes"], int(e.get("changes") or 0))
+                d["last"] = max(d["last"], e.get("last") or ts)
+            elif k == "dev_stage" and e.get("stage"):
+                d["stage"] = e["stage"]
+    if d:
+        man = GH.get("manifest") or {}
+        if man.get("trial") and man.get("by") == d["user"] and _vtuple(man.get("version", "0")) > _vtuple("0"):
+            d["published"] = man.get("version")
+    return d
+
+
+def dev_post_stage(stage):
+    ws_add("dev_stage", stage=_txt(stage, 80))
+
+
+def dev_tick():
+    """While I have the sign: count changes in the test copy's code and pick up the note line, now and then."""
+    d = dev_state()
+    if d.get("user") != me() or not os.path.isdir(DEV_APP):
+        DEV_WATCH.update(sig=None, changes=0, sent_changes=0)
+        return
+    try:
+        sig = tuple(sorted((f, os.path.getmtime(os.path.join(DEV_APP, f))) for f in os.listdir(DEV_APP)
+                           if os.path.isfile(os.path.join(DEV_APP, f))))
+    except OSError:
+        sig = None
+    if DEV_WATCH["sig"] is None:
+        DEV_WATCH.update(sig=sig, changes=d.get("changes", 0), sent_changes=d.get("changes", 0))
+    elif sig != DEV_WATCH["sig"]:
+        DEV_WATCH["sig"] = sig
+        if now() - DEV_WATCH["last"] > 20:  # a burst of saves counts as one change
+            DEV_WATCH["changes"] += 1
+        DEV_WATCH["last"] = now()
+    if DEV_WATCH["changes"] != DEV_WATCH["sent_changes"] and now() - DEV_WATCH["sent"] > 30:
+        ws_add("dev_progress", changes=DEV_WATCH["changes"], last=DEV_WATCH["last"])
+        DEV_WATCH.update(sent=now(), sent_changes=DEV_WATCH["changes"])
+        if d.get("stage") == "started":
+            dev_post_stage("trying it in the test copy")
+    try:
+        m = os.path.getmtime(DEV_NOTE)
+    except OSError:
+        m = None
+    if m and m != DEV_WATCH["note_m"]:
+        first = DEV_WATCH["note_m"] is None
+        DEV_WATCH["note_m"] = m
+        if not first or m > d.get("since", 0):
+            try:
+                with open(DEV_NOTE, encoding="utf-8", errors="replace") as fh:
+                    lines = [l.strip() for l in fh.read().splitlines() if l.strip()]
+            except OSError:
+                lines = []
+            if lines and (not d.get("notes") or d["notes"][-1]["text"] != lines[-1][:140]):
+                ws_add("dev_note", text=_txt(lines[-1], 140))
+
+
+DEV_BELL = {"last": None, "at": 0}
+
+
+def dev_bell_tick():
+    """The sign doubles as a doorbell: when the other person changes it (Done, a note, a trial kept or rolled
+    back...), check GitHub right away. Only the nudge comes through sync; the update itself still comes from GitHub."""
+    evs = [e for e in dev_events() if e.get("user") != me()]
+    last = evs[-1].get("ts", 0) if evs else 0
+    if DEV_BELL["last"] is None:
+        DEV_BELL["last"] = last
+        return
+    if last > DEV_BELL["last"] and now() - DEV_BELL["at"] > 20:
+        DEV_BELL.update(last=last, at=now())
+        threading.Thread(target=github_check, kwargs={"force": True}, daemon=True).start()
+
+
+def dev_view():
+    d = dev_state()
+    test = test_running() if not TEST_COPY else None
+    return {"sign": d, "test_copy": TEST_COPY, "test_running": bool(test), "test_version": test,
+            "dev_dir": DEV_DIR, "set_up": os.path.isfile(os.path.join(DEV_APP, "hub.py")),
+            "trial": running_trial(), "verdicts": trial_verdicts(), "backups": app_backups(),
+            "skipped": sorted(skipped_versions(), key=_vtuple), "test_error": TEST_ERR["msg"]}
+
+
+def dev_api(p, b):
+    if p == "dev_start":
+        d = dev_state()
+        if d.get("user") and d["user"] != me():
+            raise ValueError("%s is developing right now" % d["user"])
+        ws_add("dev_start", what=_txt(b.get("what"), 80))
+        return {"ok": True}
+    if p == "dev_note":
+        if dev_state().get("user") != me():
+            raise ValueError("Only the person developing can add notes")
+        ws_add("dev_note", text=_txt(b.get("text"), 140))
+        return {"ok": True}
+    if p == "dev_done":
+        ws_add("dev_done")
+        return {"ok": True}
+    if p == "dev_clear":
+        d = dev_state()
+        if d.get("user") and d["user"] != me() and now() - max(d.get("last", 0), d.get("since", 0)) < 3 * 3600:
+            raise ValueError("%s was active less than 3 hours ago" % d["user"])
+        ws_add("dev_clear", holder=d.get("user") or "")
+        return {"ok": True}
+    if p == "test_open":
+        dev_open()
+        return {"ok": True}
+    if p == "test_setup":
+        dev_setup(reset=bool(b.get("reset")))
+        return {"ok": True}
+    if p == "test_copy_data":
+        dev_setup()
+        return {"ok": True, "copied": dev_copy_data()}
+    if p == "test_folder":
+        dev_setup()
+        if os.name == "nt":
+            subprocess.Popen(["explorer", DEV_DIR])
+        return {"ok": True}
+    if p == "trial_keep":
+        t = running_trial()
+        if not t:
+            raise ValueError("This PC isn't running a trial")
+        ws_add("trial_keep", v=t["version"])
+        return {"ok": True}
+    if p == "trial_back":
+        t = running_trial()
+        v = (t or {}).get("version") or _txt(b.get("v"), 20)
+        if not v:
+            raise ValueError("Which trial?")
+        ws_add("trial_back", v=v)
+        if t:
+            threading.Timer(0.6, trial_tick).start()
+        return {"ok": True}
+    if p == "goback":
+        rollback_to(_txt(b.get("version"), 20))
+        threading.Timer(0.6, restart, kwargs={"with_window": bool(b.get("window", True))}).start()
+        return {"ok": True}
+    if p == "skip_update":
+        v = str(UPDATE.get("version") or "")
+        if v:
+            CONFIG["skip_versions"] = ((CONFIG.get("skip_versions") or []) + [v])[-20:]
+            save_config()
+        check_for_update()
+        return {"ok": True}
+    raise ValueError("unknown")
 
 
 RUNNABLE_EXT = {".exe", ".com", ".bat", ".cmd", ".ps1", ".psm1", ".psd1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
@@ -4210,6 +4595,12 @@ def open_path(full):
 
 
 def handle_post(path, body):
+    if path.startswith("/api/dev/"):
+        return 200, dev_api(path[len("/api/dev/"):], body or {})
+    return handle_post_main(path, body)
+
+
+def handle_post_main(path, body):
     if path == "/api/setup":
         name = (body.get("name") or "").strip()[:40]
         if not name:
@@ -4618,6 +5009,8 @@ class PhoneHandler(BaseHTTPRequestHandler):
 
 def start_phone_server():
     """Only while switched on from the Upload from phone window: 30 minutes, with a new PIN each time."""
+    if TEST_COPY:
+        return
     if not PHONE.get("until") or now() > PHONE["until"]:
         return
     if PHONE["server"]:
@@ -4754,7 +5147,7 @@ class HubServer(ThreadingHTTPServer):
 def run_native_window():
     """Real desktop window (pywebview / Edge WebView2). Blocks until the window is closed."""
     import webview
-    webview.create_window("RotLab", "http://localhost:%d" % PORT,
+    webview.create_window("RotLab TEST" if TEST_COPY else "RotLab", "http://localhost:%d" % PORT,
                           width=1320, height=900, min_size=(760, 560))
     store = os.path.join(os.path.dirname(config_file()), "window-data")
     try:
@@ -4901,6 +5294,9 @@ def main():
             print("couldn't move RotLab out of the project folder:", repr(e))
     threading.Thread(target=close_tv_windows, daemon=True).start()
     threading.Thread(target=monitor, daemon=True).start()
+    if TEST_COPY:
+        threading.Thread(target=test_watch, daemon=True).start()
+        print("  this is the TEST copy (no sync, no updates)")
     threading.Thread(target=ptt_loop, daemon=True).start()
     threading.Thread(target=status_loop, daemon=True).start()
     threading.Thread(target=srv.serve_forever, daemon=True).start()

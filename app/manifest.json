@@ -1,5 +1,5 @@
 {
- "version": "5.9",
+ "version": "6.0",
  "files": [
   "ui.html",
   "phone.html",
@@ -20,5 +20,5 @@
   "emoji-angry.webp",
   "hub.py"
  ],
- "notes": "Name colours (click your name). Soundboard (🎺 in the radio box). AFK button. Drag music onto the radio or the Add songs window, add many at once and tag the ticked ones together. Status (program/VEGAS/AFK) now updates within about a second."
+ "notes": "New Developer menu: a test copy to try changes safely, a sign showing who's changing RotLab, trial updates you can keep or roll back, and going back to an older version."
 }
