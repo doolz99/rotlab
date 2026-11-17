@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "6.0"
+HUB_VERSION = "6.1"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -1435,6 +1435,7 @@ STATUS_NOW = {"status": None, "seq": 0}
 def status_loop():
     """Works out what you're doing every second (VEGAS every 2 s) and shares it as soon as it changes."""
     last_written, last_write, n = None, 0, 0
+    pending, pending_since = None, 0
     while True:
         try:
             if me():
@@ -1445,6 +1446,12 @@ def status_loop():
                 with STATE_LOCK:
                     vegas, ui_seen, view = STATE["vegas"], STATE["ui_seen"], STATE["ui_view"]
                 status = compute_status(vegas, ui_seen, view)
+                # a new status has to hold for 3 seconds before it's shared, so flicking past a window doesn't count
+                if status != STATUS_NOW["status"] and STATUS_NOW["status"] is not None:
+                    if status != pending:
+                        pending, pending_since = status, now()
+                    if now() - pending_since < 3:
+                        status = STATUS_NOW["status"]
                 if status != STATUS_NOW["status"]:
                     STATUS_NOW["status"] = status
                     STATUS_NOW["seq"] += 1
@@ -3082,7 +3089,8 @@ APP_NAMES = {"chrome": "Chrome", "msedge": "Edge", "firefox": "Firefox", "opera"
 
 
 def detect_focus():
-    """The window this PC is using right now (only when you've switched on sharing it). Windows only."""
+    """The window in front on this PC right now. Windows only. Only the app name/title is ever shared, and only
+    if you've switched on File > Show what I'm doing; otherwise it's just used to tell "in RotLab" from "not"."""
     if os.name != "nt":
         return None
     import ctypes
@@ -3134,15 +3142,20 @@ def compute_status(vegas, ui_seen, view):
     if vegas:
         proj = vegas.get("project") or "a project"
         return {"kind": "editing", "text": "in %s, %s" % (vegas.get("app", "VEGAS"), proj), "project": vegas.get("project") or ""}
-    if now() - ui_seen < 90:
+    # Which window is in front decides it (Windows): RotLab in front = browsing the hub, anything else = that app.
+    try:
+        f = detect_focus()
+    except Exception as e:
+        f = None
+        print("focus:", repr(e))
+    if f is None:  # not Windows, or couldn't tell: fall back to "the page was looked at recently"
+        if now() - ui_seen < 15:
+            return {"kind": "hub", "text": "browsing " + (view or "the hub")}
+    elif re.sub(r"\s+", " ", f.get("title") or "").strip().startswith("RotLab") and (f.get("idle") or 0) <= 600:
         return {"kind": "hub", "text": "browsing " + (view or "the hub")}
     mode = CONFIG.get("share_focus", "off")
     if mode in ("app", "title"):
-        try:
-            t = focus_text(detect_focus(), mode)
-        except Exception as e:
-            t = None
-            print("focus:", repr(e))
+        t = focus_text(f, mode)
         if t:
             return {"kind": "away" if t == "away" else "online", "text": t}
     return {"kind": "online", "text": "online"}

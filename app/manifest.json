@@ -1,5 +1,5 @@
 {
- "version": "6.0",
+ "version": "6.1",
  "files": [
   "ui.html",
   "phone.html",
@@ -20,5 +20,7 @@
   "emoji-angry.webp",
   "hub.py"
  ],
- "notes": "New Developer menu: a test copy to try changes safely, a sign showing who's changing RotLab, trial updates you can keep or roll back, and going back to an older version."
+ "notes": "Trial: your status now follows the window you're actually in, within about 3 seconds.",
+ "trial": true,
+ "by": "dooly"
 }
