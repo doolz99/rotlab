@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "6.2"
+HUB_VERSION = "6.3"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -4828,6 +4828,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(403, {"error": "bad host"})
         u = urlparse(self.path)
         if u.path == "/":
+            if "w=native" in (u.query or ""):
+                WINDOW_SEEN["native"] = now()  # the app window really loaded the page
             data = ui_file("ui.html").encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -4836,7 +4838,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
         elif u.path == "/api/ping":
-            self._json(200, {"pid": os.getpid(), "version": HUB_VERSION})
+            self._json(200, {"pid": os.getpid(), "version": HUB_VERSION, "native_seen": WINDOW_SEEN["native"]})
         elif u.path == "/api/state":
             q = parse_qs(u.query)
             if q.get("focused", ["0"])[0] == "1":
@@ -5151,7 +5153,21 @@ def set_autostart(on):
 
 
 # ---------------------------------------------------------------- window
+WINDOW_SEEN = {"native": 0}
+
+
+def window_failed_file():
+    return os.path.join(os.path.dirname(config_file()), "window-failed.txt")
+
+
 def has_native_window():
+    # The app window couldn't start lately (Windows' WebView2 refused): use an Edge/Chrome app window for 3 days,
+    # then try the proper one again.
+    try:
+        if now() - os.path.getmtime(window_failed_file()) < 3 * 86400:
+            return False
+    except OSError:
+        pass
     try:
         import webview  # noqa: F401  (pip install pywebview)
         return True
@@ -5178,22 +5194,50 @@ class HubServer(ThreadingHTTPServer):
 
 
 def run_native_window():
-    """Real desktop window (pywebview / Edge WebView2). Blocks until the window is closed."""
+    """Real desktop window (pywebview / Edge WebView2). Blocks until the window is closed.
+    Returns False if the window never managed to load RotLab (WebView2 failing shows a white window); in that
+    case it has already closed it and opened RotLab in an Edge/Chrome app window instead."""
     import webview
-    webview.create_window("RotLab TEST" if TEST_COPY else "RotLab", "http://localhost:%d" % PORT,
-                          width=1320, height=900, min_size=(760, 560))
+    started = now()
+    win = webview.create_window("RotLab TEST" if TEST_COPY else "RotLab", "http://localhost:%d/?w=native" % PORT,
+                                width=1320, height=900, min_size=(760, 560))
+    result = {"ok": True}
+
+    def watchdog():
+        for _ in range(40):  # up to 20 seconds
+            time.sleep(0.5)
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:%d/api/ping" % PORT, timeout=2) as r:
+                    if (json.loads(r.read().decode("utf-8")).get("native_seen") or 0) >= started - 1:
+                        return
+            except Exception:
+                pass
+        print("the app window didn't load (WebView2 problem); opening RotLab in an Edge window instead")
+        result["ok"] = False
+        try:
+            with open(window_failed_file(), "w", encoding="utf-8") as fh:
+                fh.write(time.strftime("%Y-%m-%d %H:%M") + " WebView2 window failed to load\n")
+        except OSError:
+            pass
+        open_window()
+        try:
+            win.destroy()
+        except Exception:
+            pass
+
+    threading.Thread(target=watchdog, daemon=True).start()
     store = os.path.join(os.path.dirname(config_file()), "window-data")
     try:
         webview.start(private_mode=False, storage_path=store)  # keep localStorage (radio mute, volume, filters...)
     except TypeError:  # older pywebview
         webview.start()
+    return result["ok"]
 
 
 def show_window():
     if has_native_window():
         try:
-            run_native_window()
-            return True
+            return run_native_window()  # False: it fell back to an Edge window by itself
         except Exception as e:
             print("native window failed:", e)
     open_window()  # fallback: Edge/Chrome app-mode window

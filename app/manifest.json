@@ -1,5 +1,5 @@
 {
- "version": "6.2",
+ "version": "6.3",
  "files": [
   "ui.html",
   "phone.html",
@@ -20,7 +20,7 @@
   "emoji-angry.webp",
   "hub.py"
  ],
- "notes": "Trial: chat, broadcasts and status reach the other PC straight away again, and web links you type are clickable.",
+ "notes": "Trial: if the RotLab window can't start (white window), RotLab opens in an Edge window instead.",
  "trial": true,
- "by": "Six"
+ "by": "dooly"
 }
