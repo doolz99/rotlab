@@ -21,6 +21,13 @@ select.field{padding:3px 4px}
 a,.lnk{color:#9db8ff;cursor:pointer;text-decoration:underline;background:none;border:0;padding:0}
 .win{position:fixed;inset:0;display:flex;flex-direction:column;padding:3px}
 .titlebar{display:flex;align-items:center;gap:6px;padding:3px 3px 3px 6px;background:linear-gradient(90deg,var(--sel),var(--sel2));color:#fff;font-weight:bold;user-select:none}
+body.testcopy .titlebar{background:linear-gradient(90deg,#8a3a00,#d07a1a)}
+.testtag{background:#ffcf6a;color:#000;font-size:11px;padding:0 6px;margin-left:6px;display:none;flex:none}
+body.testcopy .testtag{display:inline}
+#stDev{cursor:pointer;white-space:nowrap;max-width:46%;overflow:hidden;text-overflow:ellipsis}
+#stDev.busy{color:#ffcf6a}
+.devnotes{max-height:180px;overflow:auto;font-size:12px;line-height:1.5;margin:6px 0}
+.devnotes div{padding:1px 0;border-bottom:1px solid #222}
 .titlebar span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .menubar{display:flex;gap:1px;padding:2px;border-bottom:1px solid var(--dk);box-shadow:0 1px 0 var(--lt);position:relative;z-index:20}
 .mi{position:relative}
@@ -177,7 +184,7 @@ label.ck{display:flex;gap:6px;align-items:center}
 <div class="win out">
  <div class="titlebar">
   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="5" width="14" height="10" fill="#c0c0c0" stroke="#000"/><rect x="1" y="2" width="14" height="3" fill="#fff" stroke="#000"/><path d="M6 8 L11 10 L6 12 Z" fill="#000"/></svg>
-  <span id="title">RotLab</span>
+  <span id="title">RotLab</span><span class="testtag">TEST COPY: not synced, only on this PC</span>
  </div>
  <div class="menubar">
   <div class="mi"><button><u>F</u>ile</button><div class="drop out">
@@ -209,6 +216,13 @@ label.ck{display:flex;gap:6px;align-items:center}
    <button data-act="bc">Broadcast (push to talk)...</button></div></div>
   <div class="mi"><button><u>S</u>ync</button><div class="drop out"><button data-act="sync">Sync status &amp; linking...</button></div></div>
   <div class="mi"><button>P<u>h</u>one</button><div class="drop out"><button data-act="phone">Upload from phone...</button></div></div>
+  <div class="mi"><button><u>D</u>eveloper</button><div class="drop out">
+   <button data-act="devsign">The developing sign...</button><hr>
+   <button data-act="testopen">Open the test copy</button>
+   <button data-act="testdata">Copy my data into the test copy</button>
+   <button data-act="testfolder">Open the test copy's folder</button>
+   <button data-act="testreset">Reset the test copy to the installed version...</button><hr>
+   <button data-act="goback">Go back to an older version...</button></div></div>
   <div class="mi"><button><u>H</u>elp</button><div class="drop out"><button data-act="bug">Report a bug...</button><button data-act="idea">Suggest something...</button><hr><button data-act="about">About RotLab</button></div></div>
  </div>
  <div id="banners"></div>
@@ -234,6 +248,7 @@ label.ck{display:flex;gap:6px;align-items:center}
  <div class="status">
   <div class="in" id="stSync" style="flex:1">Sync: starting...</div>
   <div class="in" id="stLive" title="Instant chat and cursors">Live: off</div>
+  <div class="in" id="stDev" title="Who's changing RotLab right now (click for more)">&#128295; ...</div>
   <div class="in" id="stVer">v-</div>
  </div>
 </div>
@@ -299,7 +314,11 @@ async function act(a){try{
  else if(a.startsWith("v-"))setArea(a.slice(2));
  else if(a==="msgonly"){msgOnly=!msgOnly;LS.set("msgonly",msgOnly);$("feed")._last="";renderFeed(true);toast(msgOnly?"Feed shows only messages":"Feed shows messages and changes")}
  else if(a==="reload")location.reload();
- else if(a==="ai")aiDlg();else if(a==="share")shareDlg();else if(a==="color")colorDlg();
+ else if(a==="ai")aiDlg();else if(a==="share")shareDlg();else if(a==="devsign")devDlg();else if(a==="goback")goBackDlg();
+ else if(a==="testopen"){await api("/api/dev/test_open");toast("Opening the test copy... (it has an orange title bar)")}
+ else if(a==="testdata"){const r=await api("/api/dev/test_copy_data");toast("Copied "+r.copied+" files into the test copy. Reload it to see them.")}
+ else if(a==="testfolder")await api("/api/dev/test_folder");
+ else if(a==="testreset"){if(confirm("Put the installed version back into the test copy? Any changes being tried there are lost."))await api("/api/dev/test_setup",{reset:true}),toast("The test copy now matches the installed version")}else if(a==="color")colorDlg();
  else if(a==="bc")bcDlg();
  else if(a==="cam")camDlg();else if(a==="screen")avStart("screen");else if(a==="avstop")avStopAll();
  else if(a==="bug")fbNewDlg("bug");else if(a==="idea")fbNewDlg("suggestion");
@@ -723,7 +742,11 @@ function logHtml(e){const u=`${whoB(e.user)}`,files=e.files||[],n=e.count||files
   case"joined":return `${u} started using RotLab`;case"sync_accept":return `${u} linked with ${esc(e.device)}`;case"updated":return `${u}'s RotLab updated to v${esc(e.version)}`}
  return null}
 function wsLogHtml(e){{const xh=xLogHtml(e);if(xh!==undefined)return xh}const u=`${whoB(e.user)}`,r=W.requests.find(x=>x.rid===e.rid),rl=r?`<a data-ticket="${r.rid}">#${r.num} ${esc(r.title)}</a>`:"a request",pt=W.parts.find(x=>x.part===e.part);
- switch(e.kind){case"proj_new":return `${u} made a new project, <b>${esc(e.name)}</b>`;case"proj_set":return e.archived?`${u} archived ${esc(pname(e.pid))}`:e.name?`${u} renamed a project to <b>${esc(e.name)}</b>`:null;
+ switch(e.kind){case"dev_start":return `🔧 ${u} started developing${e.what?": <b>"+esc(e.what)+"</b>":""}`;case"dev_done":return `🔧 ${u} finished developing`;
+  case"dev_clear":return `🔧 ${u} cleared the developing sign${e.holder?" ("+esc(e.holder)+" had it)":""}`;
+  case"trial_keep":return `${u} kept trial <b>${esc(e.v)}</b>: it's the normal version now`;case"trial_back":return `${u} rolled back trial <b>${esc(e.v)}</b>: both PCs go back to the version before`;
+  case"dev_note":case"dev_progress":case"dev_stage":return null;
+  case"proj_new":return `${u} made a new project, <b>${esc(e.name)}</b>`;case"proj_set":return e.archived?`${u} archived ${esc(pname(e.pid))}`:e.name?`${u} renamed a project to <b>${esc(e.name)}</b>`:null;
   case"part_new":return `${u} added <b>${esc(e.name)}</b> to the outline`;
   case"part_set":if(e.stage!=null&&pt){const p=W.projects.find(x=>x.pid===pt.pid);return `${u} moved <b>${esc(pt.name)}</b> to ${esc(p?p.stages[e.stage]:e.stage)}`}return null;
   case"req_new":return `${u} asked${e.to&&e.to!=="anyone"?" "+esc(who(e.to)):""} for ${rl}`;case"req_claim":return `${u} is doing ${rl}`;case"req_submit":return `${u} sent files for ${rl}`;
@@ -758,12 +781,45 @@ $("sendBtn").onclick=sendChat;$("say").onkeydown=e=>{if(e.key==="Enter")sendChat
 function renderBanners(){let h="";
  if(S.clash)h+=`<div class="banner warn">&#9888; <b>${esc(S.clash.user)}</b> also has <b>${esc(S.clash.project)}</b> open. Only one of you should save it.</div>`;
  for(const p of (S.syncthing.pending||[]))h+=`<div class="banner ok"><span style="flex:1"><b>${esc(p.name)}</b> wants to join this workspace</span><button class="btn sm" data-acc="${esc(p.id)}" data-nm="${esc(p.name)}">Accept</button><button class="btn sm" data-dis="${esc(p.id)}">Ignore</button></div>`;
- if(S.update&&S.update.pending)h+=`<div class="banner info"><span style="flex:1">Version ${esc(S.update.version)} is available${S.update.notes?": "+esc(S.update.notes):"."} <a class="lnk" href="https://github.com/normanbatesbmotel-boop/rotlab/commits/main" target="_blank" rel="noopener">See every change</a></span><button class="btn sm" id="bRestart">Install and restart</button></div>`;
- if(!S.syncthing.ok&&S.syncthing.mode==="missing")h+=`<div class="banner info"><span style="flex:1">File sync isn't set up on this PC yet.</span><button class="btn sm" data-act="sync">Set up...</button></div>`;
+ const D=S.dev||{};
+ if(D.test_copy)h+=`<div class="banner warn"><span style="flex:1"><b>This is the test copy.</b> It runs the version being worked on, with pretend data. Nothing here is synced or seen by anyone else.</span></div>`+(D.test_error?`<div class="banner warn"><span style="flex:1"><b>The last change has an error</b>, so the test copy is still running the change before it: <span class="dim">${esc(D.test_error)}</span></span></div>`:"");
+ if(D.trial&&!(D.verdicts||{})[D.trial.version])h+=`<div class="banner info"><span style="flex:1"><b>Trial ${esc(D.trial.version)}</b>${D.trial.by?" from "+whoB(D.trial.by):""}${D.trial.notes?": "+esc(D.trial.notes):""}. Try it, then either of you decides for both PCs.</span><button class="btn sm" id="bTrialKeep">Keep it</button><button class="btn sm" id="bTrialBack">Roll back</button></div>`;
+ if(S.update&&S.update.pending)h+=`<div class="banner info"><span style="flex:1">${S.update.trial?"<b>Trial update</b> "+esc(S.update.version)+(S.update.by?" from "+whoB(S.update.by):""):"Version "+esc(S.update.version)} is available${S.update.notes?": "+esc(S.update.notes):"."} <a class="lnk" href="https://github.com/normanbatesbmotel-boop/rotlab/commits/main" target="_blank" rel="noopener">See every change</a></span><button class="btn sm" id="bRestart">${S.update.trial?"Install the trial":"Install and restart"}</button>${S.update.on_disk?"":'<button class="btn sm" id="bSkip" title="Don\'t offer this version again on this PC">Skip</button>'}</div>`;
+ if(!D.test_copy&&!S.syncthing.ok&&S.syncthing.mode==="missing")h+=`<div class="banner info"><span style="flex:1">File sync isn't set up on this PC yet.</span><button class="btn sm" data-act="sync">Set up...</button></div>`;
  if($("banners")._last!==h){$("banners").innerHTML=h;$("banners")._last=h;
   $("banners").querySelectorAll("[data-acc]").forEach(b=>b.onclick=async()=>{await api("/api/sync/accept",{id:b.dataset.acc,name:b.dataset.nm});toast("Linked.");tick()});
   $("banners").querySelectorAll("[data-dis]").forEach(b=>b.onclick=async()=>{await api("/api/sync/dismiss",{id:b.dataset.dis});tick()});
+  if($("bSkip"))$("bSkip").onclick=async()=>{await api("/api/dev/skip_update");toast("This version won't be offered again on this PC");tick()};
+  if($("bTrialKeep"))$("bTrialKeep").onclick=async()=>{try{await api("/api/dev/trial_keep");toast("Kept. It's now the normal version on both PCs.");tick()}catch(e){toast(e.message)}};
+  if($("bTrialBack"))$("bTrialBack").onclick=async()=>{if(!confirm("Roll back this trial on both PCs? Each PC goes back to the version it had before. RotLab restarts."))return;try{await api("/api/dev/trial_back");document.body.innerHTML='<p style="padding:40px;color:#a8a8a8">Rolling back... RotLab reopens in a few seconds.</p>'}catch(e){toast(e.message)}};
   if($("bRestart"))$("bRestart").onclick=async()=>{const r=await api("/api/restart",{window:true,install:true}).catch(e=>({ok:false,error:e.message}));if(!r.ok){toast(r.error||"Couldn't install");return}document.body.innerHTML='<p style="padding:40px;color:#a8a8a8">Updating... RotLab reopens in a few seconds.</p>';setTimeout(()=>window.close(),1500)}}}
+/* ---------------- developing sign, test copy, going back ---------------- */
+function devAgo2(ts){const t=devAgo(ts);return t==="just now"?t:t.trim()+" ago"}
+function devAgo(ts){const m=Math.max(0,Math.round((Date.now()/1000-ts)/60));return m<1?"just now":m<60?m+" min":Math.floor(m/60)+" h "+(m%60?m%60+" min":"")}
+function renderDev(){const D=S.dev||{},d=D.sign||{},el=$("stDev");document.body.classList.toggle("testcopy",!!D.test_copy);
+ let t;if(D.test_copy)t="🔧 Test copy";else if(!d.user)t="🔧 Nobody's developing";
+ else{const last=d.notes&&d.notes.length?d.notes[d.notes.length-1].text:"";t="🔧 "+(d.user===S.me?"You're":d.user+" is")+" developing · "+devAgo(d.since)+(d.what?" · "+d.what:"")+(d.published?" · trial "+d.published+" is out":d.stage&&d.stage!=="started"?" · "+d.stage:"")+(last?" · \u201c"+last+"\u201d":"")}
+ if(el.textContent!==t)el.textContent=t;el.classList.toggle("busy",!!d.user&&!D.test_copy);if(!el._b){el._b=1;el.onclick=()=>devDlg()}}
+function devDlg(){const D=S.dev||{},d=D.sign||{};
+ if(D.test_copy){openDlg("Test copy",`<div>This window is the <b>test copy</b>: it runs the code in <b>${esc(D.dev_dir)}\\app</b> with pretend data. Changes to the look show up straight away; other changes restart it by itself.</div><div class="dim" style="margin-top:6px">The developing sign, trials and updates are in your normal RotLab.</div><div class="btns"><button class="btn" onclick="closeDlg()">OK</button></div>`);return}
+ const notes=(d.notes||[]).slice().reverse().map(n=>`<div><span class="dim">${esc(devAgo2(n.ts))}</span> · ${esc(n.text)}</div>`).join("");
+ const info=d.user?`<div><b>${d.user===S.me?"You are":esc(d.user)+" is"} developing</b>${d.what?": "+esc(d.what):""}</div><div class="dim">Started ${esc(devAgo2(d.since))} · ${d.changes||0} change${d.changes===1?"":"s"} in the test copy${d.last?" · last one "+esc(devAgo2(d.last)):""}${d.published?" · trial "+esc(d.published)+" is out":d.stage&&d.stage!=="started"?" · "+esc(d.stage):""}</div>${notes?`<div class="devnotes in" style="padding:4px 8px">${notes}</div>`:""}`:`<div>Nobody is changing RotLab right now.</div>`;
+ const test=`<fieldset style="margin-top:10px"><legend>Test copy on this PC</legend><div class="dim">${D.test_running?"Running (v"+esc(D.test_version)+").":D.set_up?"Not running.":"Not set up yet; opening it sets it up."} Folder: ${esc(D.dev_dir)}</div><div class="btns" style="justify-content:flex-start"><button class="btn" data-dv="test_open">Open it</button><button class="btn" data-dv="test_copy_data">Copy my data into it</button><button class="btn" data-dv="test_folder">Open the folder</button></div></fieldset>`;
+ let btns="";
+ if(!d.user)btns=`<input class="field" id="dvWhat" placeholder="What are you working on? (optional)" style="flex:1;min-width:0"><button class="btn b" id="dvStart">I'm developing</button>`;
+ else if(d.user===S.me)btns=`<input class="field" id="dvNote" placeholder="A note about how it's going (optional)" style="flex:1;min-width:0"><button class="btn" id="dvAdd">Add note</button><button class="btn b" id="dvDone">Done</button>`;
+ else btns=Date.now()/1000-Math.max(d.last||0,d.since||0)>3*3600?`<span class="dim" style="flex:1">${esc(d.user)} hasn't done anything for a while.</span><button class="btn" id="dvClear">Clear the sign</button>`:`<span class="dim" style="flex:1">Wait for ${esc(d.user)} to finish before changing RotLab, so your changes don't clash.</span>`;
+ openDlg("The developing sign",`${info}<div class="btns" style="align-items:center">${btns}</div>${test}<div class="dim" style="margin-top:8px;font-size:12px">The sign clears itself when the trial is kept or rolled back. Notes also come from the last line of ${esc(D.dev_dir)}\\dev-note.txt.</div><div class="btns"><button class="btn" onclick="closeDlg()">Close</button></div>`);
+ const go=async(p,b)=>{try{await api("/api/dev/"+p,b||{});await tick();devDlg()}catch(e){toast(e.message)}};
+ if($("dvStart"))$("dvStart").onclick=()=>go("dev_start",{what:$("dvWhat").value});
+ if($("dvAdd"))$("dvAdd").onclick=()=>{if($("dvNote").value.trim())go("dev_note",{text:$("dvNote").value})};
+ if($("dvDone"))$("dvDone").onclick=()=>go("dev_done");
+ if($("dvClear"))$("dvClear").onclick=()=>{if(confirm(d.user+" might still be working on it. Clear the sign anyway? It shows in the feed."))go("dev_clear")};
+ document.querySelectorAll("[data-dv]").forEach(b=>b.onclick=async()=>{try{const r=await api("/api/dev/"+b.dataset.dv);if(b.dataset.dv==="test_copy_data")toast("Copied "+r.copied+" files into the test copy");if(b.dataset.dv==="test_open")toast("Opening the test copy... (orange title bar)");setTimeout(()=>tick().then(()=>{if(dlgOpen())devDlg()}),2500)}catch(e){toast(e.message)}})}
+function goBackDlg(){const D=S.dev||{},bs=D.backups||[];
+ openDlg("Go back to an older version",(bs.length?`<div>These versions are kept on this PC. Going back only changes <b>this PC</b>; your files, chat, tasks and everything else stay. The version you leave won't be offered again (until a newer one comes out).</div><div style="margin-top:8px">${bs.map(b=>`<button class="btn" data-gb="${esc(b.version)}" style="margin:0 6px 6px 0">v${esc(b.version)}</button>`).join("")}</div>`:`<div>No older versions are kept on this PC yet. One is kept each time RotLab updates.</div>`)+`<div class="dim" style="margin-top:6px">To undo a trial for both PCs, use <b>Roll back</b> on the trial bar instead.</div><div class="btns"><button class="btn" onclick="closeDlg()">Close</button></div>`);
+ document.querySelectorAll("[data-gb]").forEach(b=>b.onclick=async()=>{if(!confirm("Go back to RotLab "+b.dataset.gb+" on this PC? RotLab restarts."))return;
+  try{await api("/api/dev/goback",{version:b.dataset.gb,window:true});document.body.innerHTML='<p style="padding:40px;color:#a8a8a8">Going back to v'+esc(b.dataset.gb)+'... RotLab reopens in a few seconds.</p>'}catch(e){toast(e.message)}})}
 function renderStatus(){const st=S.syncthing,sy=S.sync||{};let t;
  if(sy.installing)t="Sync: setting up... "+(sy.progress||0)+"%";else if(!st.ok)t="Sync: "+(st.mode==="missing"?"not set up":st.error);
  else{const f=st.folder,linked=(st.devices||[]).filter(d=>d.shared),con=linked.filter(d=>d.connected);t=!linked.length?"Sync: not linked with anyone yet":(con.length?"Synced with "+con.map(d=>d.name).join(", "):"Other PC offline")+(f?(f.needFiles>0?" · syncing "+f.needFiles+" files":" · up to date"):"")}
@@ -771,7 +827,7 @@ function renderStatus(){const st=S.syncthing,sy=S.sync||{};let t;
  const sw=S.storage&&S.storage.waiting_count;if(sw){const on=S.storage.waiting.some(w=>w.online);t+=` · getting ${sw} file${sw>1?"s":""}${on?"":" (waiting for the other PC)"}`}
  $("stSync").textContent=t;$("stVer").textContent="v"+S.version;
  $("stLive").textContent="Live: "+({on:Object.keys(remoteCur).length||Date.now()-Live.lastIn<120000?"connected":"on",connecting:"connecting...",retrying:"can't reach the relay, retrying",off:"off",unsupported:"not supported here"})[Live.status];
- $("title").textContent="RotLab: "+pname(pid);document.title=(S.unread.chat?"("+S.unread.chat+") ":"")+"RotLab"}
+ $("title").textContent=(S.dev&&S.dev.test_copy?"RotLab TEST: ":"RotLab: ")+pname(pid);document.title=(S.unread.chat?"("+S.unread.chat+") ":"")+"RotLab"}
 let lastSeenTs=null;
 function notify(){const evs=S.chat.concat(W.events.filter(e=>["req_new","req_submit"].includes(e.kind))).filter(e=>e.user!==S.me);const newest=evs.reduce((a,e)=>Math.max(a,e.ts),0);
  if(lastSeenTs!==null&&!focused)for(const e of evs.filter(e=>e.ts>lastSeenTs).slice(-3)){const body=e.kind?(wsLogHtml(e)||"").replace(/<[^>]+>/g,""):e.user+": "+e.text;if(window.Notification&&Notification.permission==="granted")new Notification("RotLab",{body})}
@@ -1544,7 +1600,7 @@ function radioAddDlg(files){raFiles=[];const known=Object.keys(X().radio.tags).s
 
 setTimeout(()=>dropZone($("radio"),fs=>radioAddDlg(fs)),0);
 /* ---------------- main loop ---------------- */
-function renderAll(force){if(!S||!S.configured)return;renderProjects();renderForYou();renderTabs();renderCenter(force);renderPeople();renderStatus();renderFeed(false);renderBanners();renderRadio();renderAV();
+function renderAll(force){if(!S||!S.configured)return;renderProjects();renderForYou();renderTabs();renderCenter(force);renderPeople();renderStatus();renderDev();renderFeed(false);renderBanners();renderRadio();renderAV();
  if(openTicket&&dlgOpen()){const r=W.requests.find(x=>x.rid===openTicket);if(r){const ta=$("tkText"),sig=JSON.stringify([r.thread.length,r.status]);if(!(ta&&ta.value)&&!tkFiles.length&&$("dlgBody")._sig!==sig)ticketDlg(r.rid)}}}
 let marking=false;
 async function tick(){
