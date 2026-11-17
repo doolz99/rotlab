@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "6.1"
+HUB_VERSION = "6.2"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -1433,24 +1433,24 @@ STATUS_NOW = {"status": None, "seq": 0}
 
 
 def status_loop():
-    """Works out what you're doing every second (VEGAS every 2 s) and shares it as soon as it changes."""
+    """Works out what you're doing twice a second (VEGAS every 2 s) and shares it as soon as it changes."""
     last_written, last_write, n = None, 0, 0
     pending, pending_since = None, 0
     while True:
         try:
             if me():
-                if n % 2 == 0:
+                if n % 4 == 0:
                     v = detect_vegas()
                     with STATE_LOCK:
                         STATE["vegas"] = v
                 with STATE_LOCK:
                     vegas, ui_seen, view = STATE["vegas"], STATE["ui_seen"], STATE["ui_view"]
                 status = compute_status(vegas, ui_seen, view)
-                # a new status has to hold for 3 seconds before it's shared, so flicking past a window doesn't count
+                # a new status has to hold for 1.5 seconds before it's shared, so flicking past a window doesn't count
                 if status != STATUS_NOW["status"] and STATUS_NOW["status"] is not None:
                     if status != pending:
                         pending, pending_since = status, now()
-                    if now() - pending_since < 3:
+                    if now() - pending_since < 1.5:
                         status = STATUS_NOW["status"]
                 if status != STATUS_NOW["status"]:
                     STATUS_NOW["status"] = status
@@ -1462,7 +1462,7 @@ def status_loop():
         except Exception as e:
             print("status:", repr(e))
         n += 1
-        time.sleep(1)
+        time.sleep(0.5)
 
 
 def write_offline_presence():
@@ -3941,6 +3941,12 @@ def x_post(path, b):
         CONFIG["afk"] = bool(b.get("on"))
         save_config()
         return 200, {"ok": True, "afk": CONFIG["afk"]}
+    if p == "open_url":
+        url = str(b.get("url") or "")
+        if not re.match(r"^https?://[^\s\"<>]+$", url, re.I) or len(url) > 2000:
+            raise ValueError("That isn't a web address")
+        webbrowser.open(url)  # your normal browser
+        return 200, {"ok": True}
     if p == "mystatus":
         return 200, {"status": STATUS_NOW["status"], "seq": STATUS_NOW["seq"]}
     if p == "sfx_add":
