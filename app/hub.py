@@ -3022,7 +3022,7 @@ def github_check(force=False):
     if TEST_COPY or GH["busy"] or not (CONFIG.get("github_updates", True) or force):
         return
     # every 3 hours; every 2 minutes while someone is developing or a trial is out, so trials arrive quickly
-    every = 120 if (dev_state().get("user") or running_trial()) else 3 * 3600
+    every = 120 if (dev_state().get("user") or undecided_trial()) else 3 * 3600
     if not force and now() - GH["checked"] < every:
         return
     GH["busy"], GH["checked"] = True, now()
@@ -4354,6 +4354,11 @@ def running_trial():
     return None
 
 
+def undecided_trial():
+    t = running_trial()
+    return t if t and t["version"] not in trial_verdicts() else None
+
+
 def trial_verdicts():
     out = {}
     for e in dev_events():
@@ -4369,12 +4374,16 @@ def skipped_versions():
     return sk
 
 
+BAD_VERSIONS = {"5.5", "5.6", "5.7"}  # these closed themselves; never offer going back to them
+
+
 def app_backups():
     root = os.path.join(os.path.dirname(config_file()), "app-backup")
     out = []
     try:
         for d in os.listdir(root):
-            if d.startswith("v") and os.path.isfile(os.path.join(root, d, "hub.py")) and d[1:] != HUB_VERSION:
+            if d.startswith("v") and os.path.isfile(os.path.join(root, d, "hub.py")) and d[1:] != HUB_VERSION \
+                    and d[1:] not in BAD_VERSIONS:
                 out.append({"version": d[1:], "ts": os.path.getmtime(os.path.join(root, d))})
     except OSError:
         pass
@@ -4385,7 +4394,7 @@ def rollback_to(version, skip_current=True):
     """Put back a version kept on this PC. The one we're leaving is kept too, and (normally) skipped from now on."""
     version = str(version)
     src = os.path.join(os.path.dirname(config_file()), "app-backup", "v" + version)
-    if not re.match(r"^[0-9][0-9.]*$", version) or not os.path.isfile(os.path.join(src, "hub.py")):
+    if version in BAD_VERSIONS or not re.match(r"^[0-9][0-9.]*$", version) or not os.path.isfile(os.path.join(src, "hub.py")):
         raise ValueError("That version isn't kept on this PC")
     py_compile.compile(os.path.join(src, "hub.py"), cfile=os.path.join(os.path.dirname(config_file()), "check.pyc"), doraise=True)
     backup_app()
@@ -4508,6 +4517,8 @@ DEV_BELL = {"last": None, "at": 0}
 def dev_bell_tick():
     """The sign doubles as a doorbell: when the other person changes it (Done, a note, a trial kept or rolled
     back...), check GitHub right away. Only the nudge comes through sync; the update itself still comes from GitHub."""
+    if not CONFIG.get("github_updates", True):
+        return  # update checks are switched off on this PC
     evs = [e for e in dev_events() if e.get("user") != me()]
     last = evs[-1].get("ts", 0) if evs else 0
     if DEV_BELL["last"] is None:
@@ -4570,9 +4581,12 @@ def dev_api(p, b):
         return {"ok": True}
     if p == "trial_back":
         t = running_trial()
-        v = (t or {}).get("version") or _txt(b.get("v"), 20)
+        offered = [x.get("version") for x in (UPDATE, GH.get("manifest") or {}) if x.get("trial")]
+        v = (t or {}).get("version") or (str(b.get("v")) if str(b.get("v")) in [str(o) for o in offered] else None)
         if not v:
-            raise ValueError("Which trial?")
+            raise ValueError("There's no trial to roll back")
+        if v in trial_verdicts():
+            raise ValueError("Trial %s has already been decided" % v)
         ws_add("trial_back", v=v)
         if t:
             threading.Timer(0.6, trial_tick).start()
