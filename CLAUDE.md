@@ -36,7 +36,8 @@ RotLab shows who is changing it right now: the 🔧 box at the bottom of the win
 3. Set it in both `HUB_VERSION` in `app/hub.py` and `version` in `app/manifest.json`.
 4. In `app/manifest.json` set `"trial": true`, `"by": "<who>"` and `"notes"`: one plain sentence for a
    non-programmer ("Your app shows up within a few seconds of switching to it."). List any new file in `files`.
-5. Push to `main`. Both PCs see **Trial X from …**, install it, try it, and either person clicks
+5. Push to `main`, then have the person click 🔧 → **Done** (or add a note): that nudges the other PC to
+   check GitHub straight away. Both PCs see **Trial X from …**, install it, try it, and either person clicks
    **Keep it** or **Roll back**. Roll back puts each PC back on the version it had before (a copy kept on that
    PC; nothing is downloaded) and that number is never offered again. Fixing it means a new, higher number.
 6. Once it's kept, the next normal update can drop `"trial"`.

@@ -3195,6 +3195,7 @@ def monitor():
                 try:
                     trial_tick()
                     dev_tick()
+                    dev_bell_tick()
                 except Exception as e:
                     print("dev/trial:", repr(e))
             if tick % 10 == 4:
@@ -4486,6 +4487,22 @@ def dev_tick():
                 lines = []
             if lines and (not d.get("notes") or d["notes"][-1]["text"] != lines[-1][:140]):
                 ws_add("dev_note", text=_txt(lines[-1], 140))
+
+
+DEV_BELL = {"last": None, "at": 0}
+
+
+def dev_bell_tick():
+    """The sign doubles as a doorbell: when the other person changes it (Done, a note, a trial kept or rolled
+    back...), check GitHub right away. Only the nudge comes through sync; the update itself still comes from GitHub."""
+    evs = [e for e in dev_events() if e.get("user") != me()]
+    last = evs[-1].get("ts", 0) if evs else 0
+    if DEV_BELL["last"] is None:
+        DEV_BELL["last"] = last
+        return
+    if last > DEV_BELL["last"] and now() - DEV_BELL["at"] > 20:
+        DEV_BELL.update(last=last, at=now())
+        threading.Thread(target=github_check, kwargs={"force": True}, daemon=True).start()
 
 
 def dev_view():
