@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 
-HUB_VERSION = "6.0"
+HUB_VERSION = "6.1"
 PORT = int(os.environ.get("HUB_PORT", "8765"))
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -1435,6 +1435,7 @@ STATUS_NOW = {"status": None, "seq": 0}
 def status_loop():
     """Works out what you're doing every second (VEGAS every 2 s) and shares it as soon as it changes."""
     last_written, last_write, n = None, 0, 0
+    pending, pending_since = None, 0
     while True:
         try:
             if me():
@@ -1445,6 +1446,12 @@ def status_loop():
                 with STATE_LOCK:
                     vegas, ui_seen, view = STATE["vegas"], STATE["ui_seen"], STATE["ui_view"]
                 status = compute_status(vegas, ui_seen, view)
+                # a new status has to hold for 3 seconds before it's shared, so flicking past a window doesn't count
+                if status != STATUS_NOW["status"] and STATUS_NOW["status"] is not None:
+                    if status != pending:
+                        pending, pending_since = status, now()
+                    if now() - pending_since < 3:
+                        status = STATUS_NOW["status"]
                 if status != STATUS_NOW["status"]:
                     STATUS_NOW["status"] = status
                     STATUS_NOW["seq"] += 1
@@ -3015,7 +3022,7 @@ def github_check(force=False):
     if TEST_COPY or GH["busy"] or not (CONFIG.get("github_updates", True) or force):
         return
     # every 3 hours; every 2 minutes while someone is developing or a trial is out, so trials arrive quickly
-    every = 120 if (dev_state().get("user") or running_trial()) else 3 * 3600
+    every = 120 if (dev_state().get("user") or undecided_trial()) else 3 * 3600
     if not force and now() - GH["checked"] < every:
         return
     GH["busy"], GH["checked"] = True, now()
@@ -3082,7 +3089,8 @@ APP_NAMES = {"chrome": "Chrome", "msedge": "Edge", "firefox": "Firefox", "opera"
 
 
 def detect_focus():
-    """The window this PC is using right now (only when you've switched on sharing it). Windows only."""
+    """The window in front on this PC right now. Windows only. Only the app name/title is ever shared, and only
+    if you've switched on File > Show what I'm doing; otherwise it's just used to tell "in RotLab" from "not"."""
     if os.name != "nt":
         return None
     import ctypes
@@ -3134,15 +3142,20 @@ def compute_status(vegas, ui_seen, view):
     if vegas:
         proj = vegas.get("project") or "a project"
         return {"kind": "editing", "text": "in %s, %s" % (vegas.get("app", "VEGAS"), proj), "project": vegas.get("project") or ""}
-    if now() - ui_seen < 90:
+    # Which window is in front decides it (Windows): RotLab in front = browsing the hub, anything else = that app.
+    try:
+        f = detect_focus()
+    except Exception as e:
+        f = None
+        print("focus:", repr(e))
+    if f is None:  # not Windows, or couldn't tell: fall back to "the page was looked at recently"
+        if now() - ui_seen < 15:
+            return {"kind": "hub", "text": "browsing " + (view or "the hub")}
+    elif re.sub(r"\s+", " ", f.get("title") or "").strip().startswith("RotLab") and (f.get("idle") or 0) <= 600:
         return {"kind": "hub", "text": "browsing " + (view or "the hub")}
     mode = CONFIG.get("share_focus", "off")
     if mode in ("app", "title"):
-        try:
-            t = focus_text(detect_focus(), mode)
-        except Exception as e:
-            t = None
-            print("focus:", repr(e))
+        t = focus_text(f, mode)
         if t:
             return {"kind": "away" if t == "away" else "online", "text": t}
     return {"kind": "online", "text": "online"}
@@ -4341,6 +4354,11 @@ def running_trial():
     return None
 
 
+def undecided_trial():
+    t = running_trial()
+    return t if t and t["version"] not in trial_verdicts() else None
+
+
 def trial_verdicts():
     out = {}
     for e in dev_events():
@@ -4356,12 +4374,16 @@ def skipped_versions():
     return sk
 
 
+BAD_VERSIONS = {"5.5", "5.6", "5.7"}  # these closed themselves; never offer going back to them
+
+
 def app_backups():
     root = os.path.join(os.path.dirname(config_file()), "app-backup")
     out = []
     try:
         for d in os.listdir(root):
-            if d.startswith("v") and os.path.isfile(os.path.join(root, d, "hub.py")) and d[1:] != HUB_VERSION:
+            if d.startswith("v") and os.path.isfile(os.path.join(root, d, "hub.py")) and d[1:] != HUB_VERSION \
+                    and d[1:] not in BAD_VERSIONS:
                 out.append({"version": d[1:], "ts": os.path.getmtime(os.path.join(root, d))})
     except OSError:
         pass
@@ -4372,7 +4394,7 @@ def rollback_to(version, skip_current=True):
     """Put back a version kept on this PC. The one we're leaving is kept too, and (normally) skipped from now on."""
     version = str(version)
     src = os.path.join(os.path.dirname(config_file()), "app-backup", "v" + version)
-    if not re.match(r"^[0-9][0-9.]*$", version) or not os.path.isfile(os.path.join(src, "hub.py")):
+    if version in BAD_VERSIONS or not re.match(r"^[0-9][0-9.]*$", version) or not os.path.isfile(os.path.join(src, "hub.py")):
         raise ValueError("That version isn't kept on this PC")
     py_compile.compile(os.path.join(src, "hub.py"), cfile=os.path.join(os.path.dirname(config_file()), "check.pyc"), doraise=True)
     backup_app()
@@ -4495,6 +4517,8 @@ DEV_BELL = {"last": None, "at": 0}
 def dev_bell_tick():
     """The sign doubles as a doorbell: when the other person changes it (Done, a note, a trial kept or rolled
     back...), check GitHub right away. Only the nudge comes through sync; the update itself still comes from GitHub."""
+    if not CONFIG.get("github_updates", True):
+        return  # update checks are switched off on this PC
     evs = [e for e in dev_events() if e.get("user") != me()]
     last = evs[-1].get("ts", 0) if evs else 0
     if DEV_BELL["last"] is None:
@@ -4557,9 +4581,12 @@ def dev_api(p, b):
         return {"ok": True}
     if p == "trial_back":
         t = running_trial()
-        v = (t or {}).get("version") or _txt(b.get("v"), 20)
+        offered = [x.get("version") for x in (UPDATE, GH.get("manifest") or {}) if x.get("trial")]
+        v = (t or {}).get("version") or (str(b.get("v")) if str(b.get("v")) in [str(o) for o in offered] else None)
         if not v:
-            raise ValueError("Which trial?")
+            raise ValueError("There's no trial to roll back")
+        if v in trial_verdicts():
+            raise ValueError("Trial %s has already been decided" % v)
         ws_add("trial_back", v=v)
         if t:
             threading.Timer(0.6, trial_tick).start()
